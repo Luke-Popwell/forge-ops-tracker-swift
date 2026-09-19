@@ -14,7 +14,7 @@ let package = Package(
         .target(name: "CFOTSignal"),
         .target(name: "ForgeOpsTracker", dependencies: ["CFOTSignal"]),
         // Test-only Objective-C helper (raises and catches a real NSException so its
-        // -callStackSymbols is populated) -- see its own header comment for why this can't be
+        // -callStackSymbols is populated): see its own header comment for why this can't be
         // Swift. Lives under Tests/ via an explicit path so it's never part of the shipped
         // library.
         .target(name: "CFOTTestSupport", path: "Tests/CFOTTestSupport"),

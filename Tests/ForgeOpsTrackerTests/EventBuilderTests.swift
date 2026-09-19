@@ -12,7 +12,7 @@ final class EventBuilderTests: XCTestCase {
     }
 
     // Raises a real NSException, from a real call stack, rather than constructing one with
-    // NSException(name:reason:userInfo:) directly -- confirmed directly that -callStackSymbols is
+    // NSException(name:reason:userInfo:) directly: confirmed directly that -callStackSymbols is
     // empty unless the exception is actually raised. Goes through CFOTTestSupport's Objective-C
     // helper rather than raising it here: Swift's do/catch cannot catch an NSException at all, so
     // raising one directly in Swift would crash the test process instead of being caught.
@@ -33,6 +33,7 @@ final class EventBuilderTests: XCTestCase {
         XCTAssertEqual(event["server_name"] as? String, "test-host")
         let context = event["context"] as? [String: Any]
         XCTAssertEqual(context?["order_id"] as? Int, 42)
+        XCTAssertEqual(event["sdk_name"] as? String, "swift")
     }
 
     func testBuildEventForExceptionParsesBacktrace() {
@@ -96,6 +97,54 @@ final class EventBuilderTests: XCTestCase {
         let event = EventBuilder.buildEvent(exception: exception, configuration: config, context: nil)
 
         XCTAssertEqual(event["message"] as? String, "contact user@example.com")
+    }
+
+    func testIncludesTheUserWhenGivenOneNeverScrubbedEvenThoughItsAnEmail() {
+        let config = testConfiguration()
+        let exception = NSException(name: NSExceptionName("TestException"), reason: "boom", userInfo: nil)
+
+        let event = EventBuilder.buildEvent(exception: exception, configuration: config, context: nil, user: ["id": 42, "email": "ada@example.com"])
+
+        let user = event["user"] as? [String: Any]
+        XCTAssertEqual(user?["email"] as? String, "ada@example.com")
+    }
+
+    func testIncludesBreadcrumbsWhenGiven() {
+        let crumbs: [[String: Any]] = [["category": "controller", "message": "GET /orders/42", "level": "info", "timestamp": "2024-01-15T10:29:58Z", "data": [String: Any]()]]
+
+        let payload = EventBuilder.buildEvent(exception: raiseAndCatch(), configuration: testConfiguration(), context: nil, breadcrumbs: crumbs)
+
+        let built = payload["breadcrumbs"] as? [[String: Any]]
+        XCTAssertEqual(built?.count, 1)
+        XCTAssertEqual(built?.first?["message"] as? String, "GET /orders/42")
+    }
+
+    func testOmitsTheBreadcrumbsKeyEntirelyWhenNoneWereGivenOrTheListIsEmpty() {
+        let config = testConfiguration()
+
+        XCTAssertNil(EventBuilder.buildEvent(exception: raiseAndCatch(), configuration: config, context: nil)["breadcrumbs"])
+        XCTAssertNil(EventBuilder.buildEvent(exception: raiseAndCatch(), configuration: config, context: nil, breadcrumbs: [])["breadcrumbs"])
+    }
+
+    func testScrubsLikelyPiiOutOfABreadcrumbMessageAndData() {
+        let crumbs: [[String: Any]] = [["category": "custom", "message": "emailed alice@example.com", "level": "info", "timestamp": "2024-01-15T10:29:58Z", "data": ["password": "hunter2"]]]
+
+        let payload = EventBuilder.buildEvent(exception: raiseAndCatch(), configuration: testConfiguration(), context: nil, breadcrumbs: crumbs)
+
+        let crumb = (payload["breadcrumbs"] as? [[String: Any]])?.first
+        XCTAssertEqual(crumb?["message"] as? String, "emailed [EMAIL FILTERED]")
+        XCTAssertEqual((crumb?["data"] as? [String: Any])?["password"] as? String, "[FILTERED]")
+        XCTAssertEqual(crumb?["category"] as? String, "custom")
+        XCTAssertEqual(crumb?["timestamp"] as? String, "2024-01-15T10:29:58Z")
+    }
+
+    func testOmitsTheUserKeyEntirelyWhenNoneWasGiven() {
+        let config = testConfiguration()
+        let exception = NSException(name: NSExceptionName("TestException"), reason: "boom", userInfo: nil)
+
+        let event = EventBuilder.buildEvent(exception: exception, configuration: config, context: nil)
+
+        XCTAssertNil(event["user"])
     }
 
     // captureSourceContext defaults to true (see ConfigurationTests), but a frame here never

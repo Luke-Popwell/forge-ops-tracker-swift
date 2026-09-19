@@ -1,15 +1,15 @@
 import Foundation
 
-/// Redacts likely-sensitive content out of a payload before it ever leaves the device -- the same
+/// Redacts likely-sensitive content out of a payload before it ever leaves the device: the same
 /// patterns ForgeOps itself applies again on arrival (defense in depth: this layer keeps the data
 /// out of the crash report file on disk and off the wire; the server-side layer is what actually
 /// protects the database). Ported from `app/services/pii_scrubber.rb` and this repo's own
-/// Objective-C client (`sdks/objc/Sources/ForgeOpsTracker/FOTPiiScrubber.m`) -- same key list,
+/// Objective-C client (`sdks/objc/Sources/ForgeOpsTracker/FOTPiiScrubber.m`): same key list,
 /// same 8 regex patterns (`NSRegularExpression`, not Swift's own native `Regex`, specifically so
 /// this reuses syntax already verified against real matching input by that client rather than
 /// re-verifying a second regex engine's interpretation of the same 8 patterns), same
 /// "[LABEL FILTERED]" replacement format. Deliberately does NOT support
-/// `Project#additional_sensitive_keys` -- confirmed server-side only, see that file's own header
+/// `Project#additional_sensitive_keys`: confirmed server-side only, see that file's own header
 /// comment: extending the pattern list to arbitrary customer regexes is a ReDoS risk best kept
 /// out of every client.
 public enum PiiScrubber {

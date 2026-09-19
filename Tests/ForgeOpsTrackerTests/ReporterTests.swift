@@ -49,6 +49,16 @@ final class ReporterTests: XCTestCase {
         XCTAssertEqual(CrashStore(configuration: config).pendingPayloadURLs().count, 1)
     }
 
+    func testReportExceptionIncludesTheGivenUserNeverScrubbedEvenThoughItsAnEmail() {
+        let r = reporter()
+        r.report(exception: FOTRaiseAndCatchTestException("Boom", "bad"), context: nil, user: ["id": 42, "email": "alice@example.com"])
+
+        r.uploadPendingReports()
+
+        XCTAssertEqual(StubURLProtocol.recorded.count, 1)
+        XCTAssertTrue(StubURLProtocol.recorded[0].bodyString?.contains("alice@example.com") ?? false)
+    }
+
     func testUploadPendingReportsDeliversAndDeletesOnSuccess() {
         let r = reporter()
         r.report(exception: FOTRaiseAndCatchTestException("Boom", "bad"), context: nil)

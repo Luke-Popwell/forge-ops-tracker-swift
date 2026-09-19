@@ -11,14 +11,14 @@
 static const int kFatalSignals[] = { SIGABRT, SIGILL, SIGSEGV, SIGFPE, SIGBUS, SIGTRAP };
 static const size_t kFatalSignalCount = sizeof(kFatalSignals) / sizeof(kFatalSignals[0]);
 
-/* Prepared once, at installation time, so the handler itself never allocates -- see this file's
+/* Prepared once, at installation time, so the handler itself never allocates: see this file's
  * own header comment for why that matters here. */
 static char crash_directory[PATH_MAX];
 
 static void handle_fatal_signal(int signal_number) {
     char path[PATH_MAX];
     /* snprintf and time() aren't on POSIX's strict async-signal-safe list, but both are widely
-     * relied on in practice by real-world signal handlers -- this repo's own Objective-C client
+     * relied on in practice by real-world signal handlers: this repo's own Objective-C client
      * takes the same pragmatic stance rather than hand-rolling an integer-to-string formatter
      * (see FOTSignalHandler.m's own comment); documented here as a deliberate, informed
      * tradeoff, not an oversight. */
@@ -35,14 +35,14 @@ static void handle_fatal_signal(int signal_number) {
         void *frames[64];
         int frame_count = backtrace(frames, 64);
         /* backtrace_symbols_fd(), unlike backtrace_symbols(), writes directly to a file
-         * descriptor without allocating a string array first -- documented by both glibc and
+         * descriptor without allocating a string array first: documented by both glibc and
          * Darwin's own libc as the signal-safer of the two for exactly this reason. */
         backtrace_symbols_fd(frames, frame_count, fd);
 
         close(fd);
     }
 
-    /* Restore the default disposition and re-raise, rather than swallowing the signal -- the
+    /* Restore the default disposition and re-raise, rather than swallowing the signal: the
      * process should still actually crash (and produce a real OS-level crash log) the same way
      * it would without this handler installed, the same "rethrow, don't swallow" invariant every
      * other framework integration in this repo holds to. */

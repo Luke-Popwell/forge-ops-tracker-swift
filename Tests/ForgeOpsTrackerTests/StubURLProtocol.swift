@@ -1,6 +1,6 @@
 import Foundation
 
-/// A `URLProtocol` stub for `Client` tests -- avoids a real network call or a hand-rolled TCP
+/// A `URLProtocol` stub for `Client` tests: avoids a real network call or a hand-rolled TCP
 /// server, using Foundation's own URL-loading test seam instead (`Client.init(protocolClasses:)`
 /// exists purely so tests can register this). Plays the same role
 /// `sdks/objc/Tests/FOTTestHTTPServer.m` plays for this repo's own Objective-C client.

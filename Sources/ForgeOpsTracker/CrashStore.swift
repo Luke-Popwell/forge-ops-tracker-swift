@@ -1,6 +1,6 @@
 import Foundation
 
-/// Persists crash event payloads to disk and reads them back -- the "queue" for this SDK, in the
+/// Persists crash event payloads to disk and reads them back: the "queue" for this SDK, in the
 /// sense every other SDK's DeliveryQueue is its own queue, except this one survives the process
 /// dying (which, for a crash reporter, is the one guarantee that actually matters: the app is
 /// about to terminate, possibly abnormally, so anything not already durably written before that
@@ -38,7 +38,7 @@ public final class CrashStore {
             return []
         }
 
-        // Both extensions -- "json" is a full event payload written by Reporter after an uncaught
+        // Both extensions: "json" is a full event payload written by Reporter after an uncaught
         // NSException/reported Error; "txt" is a raw signal-crash report written by the C signal
         // handler (see SignalHandler.swift's own comment for why that path can't safely build
         // JSON inline). Reporter.uploadPendingReports branches on which one it's looking at.

@@ -46,7 +46,7 @@ final class ClientTests: XCTestCase {
     }
 
     func testDeliverReturnsFalseWhenUnreachable() {
-        // No stub protocol registered -- a real (bogus, reserved) address that will never
+        // No stub protocol registered: a real (bogus, reserved) address that will never
         // resolve/connect, exercising the real failure path rather than a stub.
         let config = testConfiguration(dsn: "http://key@127.0.0.1:1/events")
         config.timeout = 0.5

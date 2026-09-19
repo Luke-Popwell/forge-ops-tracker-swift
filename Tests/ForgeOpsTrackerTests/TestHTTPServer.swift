@@ -4,7 +4,7 @@ import Foundation
     import Darwin
 #endif
 
-/// A minimal, real localhost HTTP server -- used only where the code under test genuinely can't
+/// A minimal, real localhost HTTP server: used only where the code under test genuinely can't
 /// take a stubbed URLProtocol (the public `ForgeOpsTracker` facade builds its own `Client`
 /// internally with no injection point, unlike `Client`/`Reporter` in the other test files, the
 /// same reason this repo's own Objective-C client's `FOTTestHTTPServer.m` exists). A direct Swift

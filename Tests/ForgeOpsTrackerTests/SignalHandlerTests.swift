@@ -2,7 +2,7 @@
 import XCTest
 
 final class SignalHandlerTests: XCTestCase {
-    // Installing the real handlers (registration succeeding) is what's tested here -- actually
+    // Installing the real handlers (registration succeeding) is what's tested here: actually
     // raising a fatal signal to test the handler's own body would crash this test process itself,
     // the same reason every real crash reporter's signal path is validated by manual/integration
     // crash testing, not a unit test. See CFOTSignal's own header comment.

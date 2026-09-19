@@ -6,5 +6,5 @@ NSException *FOTRaiseAndCatchTestException(NSString *name, NSString *reason) {
     } @catch (NSException *exception) {
         return exception;
     }
-    return nil; // unreachable -- @throw always transfers to @catch above
+    return nil; // unreachable: @throw always transfers to @catch above
 }
