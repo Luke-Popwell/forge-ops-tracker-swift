@@ -1,6 +1,6 @@
 # ForgeOpsTracker (Swift)
 
-Swift error/crash reporting client for a [ForgeOps](../../) instance,
+Swift error/crash reporting client for [ForgeOps](https://getforgeops.net),
 for iOS/macOS apps. Requires Swift 5.9+ (macOS 12+ / iOS 15+). Real-world Swift on Apple platforms
 is overwhelmingly app code, not a web backend, so there's no server-side request-exception path for
 this SDK to hook into. This SDK is instead a genuine crash reporter: it captures what would
