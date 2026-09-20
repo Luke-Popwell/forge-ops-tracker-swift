@@ -149,6 +149,57 @@ final class PerformanceFlusherTests: XCTestCase {
         XCTAssertEqual(flusher.tally(for: "GET /new")?.count, 1)
     }
 
+    private func histogram(of sample: [String: Any]) -> [String: Int] {
+        (sample["histogram"] as? [String: Int]) ?? [:]
+    }
+
+    func testDeliversALatencyHistogramPerBucketAlongsideCountSumAndMax() throws {
+        let flusher = makeFlusher(configuration())
+        for duration in [10.0, 40.0, 120.0, 700.0, 12_000.0] {
+            flusher.record(transactionName: "GET /posts", durationMs: duration)
+        }
+
+        flusher.flush()
+
+        let sample = try XCTUnwrap((lastRequestJSON()["samples"] as? [[String: Any]])?.first)
+        XCTAssertEqual(histogram(of: sample), ["50": 2, "250": 1, "1000": 1, "inf": 1])
+        XCTAssertEqual(histogram(of: sample).values.reduce(0, +), sample["request_count"] as? Int)
+    }
+
+    func testKeepsHistogramCountsForTheNextFlushWhenDeliveryFails() throws {
+        let config = configuration(path: "/unauthorized") // answers 401: a failed delivery
+        let flusher = makeFlusher(config)
+        flusher.record(transactionName: "GET /posts", durationMs: 10)
+        flusher.flush()
+
+        config.dsn = "http://key@127.0.0.1:\(server.port)/api/v1/events"
+        flusher.record(transactionName: "GET /posts", durationMs: 300)
+        flusher.flush()
+
+        let sample = try XCTUnwrap((lastRequestJSON()["samples"] as? [[String: Any]])?.first)
+        XCTAssertEqual(histogram(of: sample), ["50": 1, "500": 1])
+    }
+
+    func testAHistogramCountRecordedDuringDeliveryIsSentOnTheNextFlush() throws {
+        let flusher = makeFlusher(configuration())
+        flusher.record(transactionName: "GET /posts", durationMs: 10)
+        flusher.beforeDeliveryHook = { [unowned flusher] in
+            flusher.beforeDeliveryHook = nil
+            flusher.record(transactionName: "GET /posts", durationMs: 300) // same transaction, mid-delivery
+            flusher.record(transactionName: "GET /new", durationMs: 5) // a brand-new one, mid-delivery
+        }
+
+        flusher.flush()
+        let first = try XCTUnwrap((lastRequestJSON()["samples"] as? [[String: Any]])?.first)
+        XCTAssertEqual(histogram(of: first), ["50": 1])
+
+        flusher.flush()
+        let second = try XCTUnwrap(lastRequestJSON()["samples"] as? [[String: Any]])
+        let byName = Dictionary(uniqueKeysWithValues: second.map { ($0["transaction_name"] as! String, $0) })
+        XCTAssertEqual(histogram(of: try XCTUnwrap(byName["GET /posts"])), ["500": 1])
+        XCTAssertEqual(histogram(of: try XCTUnwrap(byName["GET /new"])), ["50": 1])
+    }
+
     func testTheTimerFlushesOnItsOwnInterval() throws {
         let config = configuration()
         config.performanceFlushInterval = 0.05

@@ -18,6 +18,7 @@ public final class PerformanceFlusher {
         var count = 0
         var durationSumMs = 0.0
         var maxDurationMs = 0.0
+        var histogram: [String: Int] = [:]
     }
 
     private let configuration: Configuration
@@ -48,6 +49,9 @@ public final class PerformanceFlusher {
         bucket.count += 1
         bucket.durationSumMs += durationMs
         bucket.maxDurationMs = max(bucket.maxDurationMs, durationMs)
+        // The distribution count/sum/max can't reconstruct: see HistogramBucketer for why the server
+        // approximates a percentile from these bucket counts.
+        bucket.histogram[HistogramBucketer.bucketFor(durationMs), default: 0] += 1
         buckets[transactionName] = bucket
         let needsTimer = timer == nil
         lock.unlock()
@@ -94,6 +98,7 @@ public final class PerformanceFlusher {
                 "request_count": bucket.count,
                 "duration_sum_ms": bucket.durationSumMs,
                 "max_duration_ms": bucket.maxDurationMs,
+                "histogram": bucket.histogram,
             ]
         }
 
@@ -104,6 +109,14 @@ public final class PerformanceFlusher {
             guard var current = buckets[name] else { continue }
             current.count = max(0, current.count - sent.count)
             current.durationSumMs = max(0, current.durationSumMs - sent.durationSumMs)
+            for (label, sentCount) in sent.histogram {
+                let remaining = (current.histogram[label] ?? 0) - sentCount
+                if remaining > 0 {
+                    current.histogram[label] = remaining
+                } else {
+                    current.histogram.removeValue(forKey: label)
+                }
+            }
             // maxDurationMs is deliberately left as whatever is currently on the bucket, sent or
             // not: unlike count/durationSumMs, a max can't be correctly "subtracted" back out (the
             // true max of what's left is anything at or below it, not knowable from the two numbers
