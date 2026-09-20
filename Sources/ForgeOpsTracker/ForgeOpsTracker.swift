@@ -4,7 +4,7 @@ import Foundation
 /// (`application(_:didFinishLaunchingWithOptions:)` or your SwiftUI `App`'s `init`):
 ///
 ///     ForgeOpsTracker.configure { config in
-///         config.dsn = "https://<api_key>@your-forgeops-host/api/v1/events"
+///         config.dsn = "https://<api_key>@getforgeops.net/api/v1/events"
 ///         config.environment = "production"
 ///     }
 ///     ForgeOpsTracker.installHandlers()

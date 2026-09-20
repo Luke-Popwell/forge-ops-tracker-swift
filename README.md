@@ -45,7 +45,7 @@ Set a DSN (from a project's settings page in ForgeOps), as early as possible in 
 import ForgeOpsTracker
 
 ForgeOpsTracker.configure { config in
-    config.dsn = "https://<api_key>@your-forgeops-host/api/v1/events"
+    config.dsn = "https://<api_key>@getforgeops.net/api/v1/events"
     config.environment = "production"
 }
 ForgeOpsTracker.installHandlers()
