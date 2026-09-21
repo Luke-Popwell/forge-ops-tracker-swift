@@ -52,6 +52,7 @@ public enum EventBuilder {
             exceptionClass: exception.name.rawValue,
             message: exception.reason ?? "",
             backtrace: backtrace(forCallStackSymbols: exception.callStackSymbols),
+            sqlStatement: SqlStatement.findIn(exception: exception),
             configuration: configuration,
             context: context,
             user: user,
@@ -65,6 +66,7 @@ public enum EventBuilder {
             exceptionClass: String(describing: type(of: error)),
             message: (error as? LocalizedError)?.errorDescription ?? nsError.localizedDescription,
             backtrace: backtrace(forCallStackSymbols: Thread.callStackSymbols),
+            sqlStatement: SqlStatement.findIn(error: error),
             configuration: configuration,
             context: context,
             user: user,
@@ -81,7 +83,7 @@ public enum EventBuilder {
     // scrubbing has already run on everything else, is what keeps it a deliberate exemption
     // rather than an oversight: the whole point of this field is that it's deliberately
     // identifiable, not something to redact.
-    private static func buildEvent(exceptionClass: String, message: String, backtrace: [[String: Any]], configuration: Configuration, context: [String: Any]?, user: [String: Any]?, breadcrumbs: [[String: Any]]?) -> [String: Any] {
+    private static func buildEvent(exceptionClass: String, message: String, backtrace: [[String: Any]], sqlStatement: String?, configuration: Configuration, context: [String: Any]?, user: [String: Any]?, breadcrumbs: [[String: Any]]?) -> [String: Any] {
         var payload: [String: Any] = [
             "exception_class": exceptionClass,
             "message": message,
@@ -101,6 +103,19 @@ public enum EventBuilder {
         // blanket treatment is the consistent choice here rather than a carve-out of its own.
         if let breadcrumbs, !breadcrumbs.isEmpty {
             payload["breadcrumbs"] = breadcrumbs
+        }
+        // See SqlStatement for what's read off the error and how it's masked. The statement itself
+        // only goes out when captureSqlStatement is on; the extracted names go out on their own
+        // (captureSqlObjects) so an issue can still name the table or view involved. Scrubbed with
+        // everything else below, like the rest of the payload.
+        if configuration.captureSqlObjects || configuration.captureSqlStatement,
+           let masked = SqlStatement.mask(sqlStatement) {
+            if configuration.captureSqlObjects, let objects = SqlStatement.objects(masked) {
+                payload["sql_objects"] = objects
+            }
+            if configuration.captureSqlStatement {
+                payload["sql_statement"] = masked
+            }
         }
 
         var result: [String: Any]

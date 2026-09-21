@@ -29,6 +29,17 @@ public final class Configuration {
     /// `Thread.callStackSymbols` ever produces a real file+line pair to read in the first place.
     public var captureSourceContext: Bool = true
 
+    /// When an error carries the SQL behind a failed local database call (GRDB's `DatabaseError`,
+    /// SQLite's own `while compiling:` text), send the names of the table and view it touched, so
+    /// an issue says where to start looking. Names are identifiers, never values, which is why
+    /// this defaults on. `captureSqlStatement` is the separate, opt-in step of also sending the
+    /// statement itself, with every string and number replaced by `?`; off by default because even
+    /// a masked statement describes your schema, and ForgeOps' own per-project setting is what
+    /// durably governs whether the server stores it.
+    public var captureSqlObjects: Bool = true
+
+    public var captureSqlStatement: Bool = false
+
     /// Whether `ForgeOpsTracker.addBreadcrumb` records anything at all. On by default, matching
     /// every other client in this repo.
     public var trackBreadcrumbs: Bool = true

@@ -327,6 +327,26 @@ happens. In practice this class only calls `try?`-guarded Foundation APIs (`JSON
 `FileManager`) that surface failure as a thrown `Error`, not a raised `NSException`, so the
 realistic exposure is low, but it's a real, documented gap, not a hypothetical one.
 
+## Database errors
+
+When an error carries the SQL behind a failed local database call, the event includes the names of the tables and views (and any stored procedure) that SQL touched, so the issue tells you where to start looking. This is on by default and sends identifiers only, never values. The statement is read by reflection from a `sql`, `statement` or `query` property on the error (GRDB's `DatabaseError.sql`), and from the error text GRDB and SQLite produce (`while executing ...`, `while compiling: ...`), including through `NSUnderlyingErrorKey`. Core Data exposes no statement.
+
+To also send the SQL statement itself, opt in. Every string and number is replaced by `?` before it
+leaves your process (`WHERE email = 'a@b.co' AND id = 42` is sent as `WHERE email = ? AND id = ?`),
+and ForgeOps masks it again on arrival:
+
+```swift
+ForgeOpsTracker.configure { config in
+    config.captureSqlStatement = true // default false
+    // config.captureSqlObjects = false // default true; false stops even the names
+}
+```
+
+Each ForgeOps project also has its own "Capture the SQL behind database errors" setting. Turn it off
+there and the statement is never stored for that project, whatever this flag says; the names are
+still kept. A view and a table are written the same way in SQL, so both show as tables/views; the
+database's own error message usually settles which it was.
+
 ## Running the tests
 
 ```bash
