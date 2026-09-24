@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.1.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.4.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -185,8 +185,9 @@ would otherwise be silently discarded, a real bug `sdks/go` had and fixed and th
 
 One flow's own call tree (a screen load, a sign-in, a network round trip and what it triggered),
 shown as a span tree on ForgeOps. A trace is sent only when the whole flow took at least
-`traceCaptureThreshold` seconds (1 by default), so fast flows cost nothing on the wire. Traces are
-per app; nothing is propagated across services.
+`traceCaptureThreshold` seconds (1 by default), so fast flows cost nothing on the wire. A request
+your app makes inside a trace can carry the trace on to your backend, so an error in the app links to
+the backend request it caused (see "Connecting app errors to your backend" below).
 
 ```swift
 ForgeOpsTracker.trace("load home screen") { trace in
@@ -217,6 +218,92 @@ flushed at exit and an iOS app is suspended shortly after it backgrounds, so cal
 `ForgeOpsTracker.flushSpans()` (synchronous, on a background queue if you would rather not block the
 main thread) from `applicationDidEnterBackground` or before a command-line tool quits. Turn the
 feature off with `config.trackTracing = false`.
+
+### Connecting app errors to your backend
+
+Trace and span ids use the [W3C Trace Context](https://www.w3.org/TR/trace-context/) format (a 32
+character lowercase hex trace id, 16 character span ids). Send a request through
+`trace.measureRequest` and it goes out with a `traceparent` header
+(`00-<trace id>-<span id>-01`) and is recorded as an `http` span named after its method and host;
+the header's parent id is that span's own id, so the backend's own spans for the request nest under
+it. An error captured with the trace carries its `trace_id`, which is what links it to the backend
+error from the same request. A checkout flow:
+
+```swift
+func placeOrder(_ order: Order) async {
+    let trace = ForgeOpsTracker.startTrace("checkout")
+    defer { trace.finish() }
+
+    var request = URLRequest(url: URL(string: "https://api.example.com/orders")!)
+    request.httpMethod = "POST"
+    request.httpBody = try? JSONEncoder().encode(order)
+
+    do {
+        let (_, response) = try await trace.measureRequest(request) { try await URLSession.shared.data(for: $0) }
+        guard (response as? HTTPURLResponse)?.statusCode == 201 else { throw CheckoutError.rejected }
+    } catch {
+        ForgeOpsTracker.capture(error: error, context: ["order_id": order.id], trace: trace)
+    }
+}
+```
+
+The public API:
+
+```swift
+// On Trace (and on Trace?, where a nil trace sends the request unchanged and records nothing):
+func measureRequest<T>(_ request: URLRequest, name: String? = nil, _ body: (URLRequest) throws -> T) rethrows -> T
+func measureRequest<T>(_ request: URLRequest, name: String? = nil, _ body: (URLRequest) async throws -> T) async rethrows -> T
+func startRequestSpan(_ request: URLRequest, name: String? = nil) -> RequestSpan
+let traceId: String
+
+// RequestSpan, for completion-handler code: send span.request, then call finish when it completes.
+let request: URLRequest       // yours, plus the traceparent header when one was added
+let spanId: String?
+let traceparent: String?      // the header value added, for a transport that doesn't take a URLRequest
+func finish(response: URLResponse? = nil, error: Error? = nil)
+
+// Errors: trace links the event to it.
+ForgeOpsTracker.capture(error:context:user:trace:)
+ForgeOpsTracker.captureException(_:context:user:trace:)
+```
+
+`measureRequest` records the span even if `body` throws (the error propagates unchanged), and records
+the status code when `body` returns a `URLResponse` or a `(Data, URLResponse)`/`(URL, URLResponse)`
+pair, which is what `URLSession` returns. With completion handlers:
+
+```swift
+let span = trace.startRequestSpan(request)
+URLSession.shared.dataTask(with: span.request) { data, response, error in
+    span.finish(response: response, error: error)
+    if let error { ForgeOpsTracker.capture(error: error, trace: trace) }
+}.resume()
+```
+
+Inside the synchronous body of `ForgeOpsTracker.trace`, `measureSpan` or the synchronous
+`measureRequest`, the trace is current on that thread, so a plain `ForgeOpsTracker.capture(error:)`
+there carries its `trace_id` without passing it (and so does an uncaught `NSException` raised there).
+Async code can resume on another thread, so pass `trace:` explicitly there. An error captured with no
+trace has no `trace_id` and is exactly what it was before. A request that already has a
+`traceparent` header is left alone. Nothing instruments `URLSession` automatically: only requests you
+send through `measureRequest` or `startRequestSpan` get the header.
+
+Two options control the header:
+
+```swift
+ForgeOpsTracker.configure { config in
+    config.propagateTraces = true           // default; false stops the header (the http span is still recorded)
+    config.tracePropagationTargets = nil    // default: every host
+    // or only your own backends: a host matches exactly or as a subdomain on a dot boundary
+    // ("example.com" matches "api.example.com", not "badexample.com"); .pattern is a regular
+    // expression matched against the lowercased host
+    config.tracePropagationTargets = ["example.com", .pattern(#"\.internal$"#)]
+}
+```
+
+Narrow the targets when the app also calls third-party APIs that reject unknown headers or shouldn't
+see your trace ids. To see the app error and the backend error together, the backend must also report
+to ForgeOps (the Ruby SDK continues the trace from the header automatically as of 0.12.0) and the two
+projects must be linked in ForgeOps.
 
 ## Custom metrics and infrastructure monitoring
 

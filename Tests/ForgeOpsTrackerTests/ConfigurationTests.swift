@@ -11,6 +11,44 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertTrue(config.enabledEnvironments.contains("production"))
         XCTAssertTrue(config.enabledEnvironments.contains("staging"))
         XCTAssertTrue(config.crashReportsDirectory.contains("com.forgeops.tracker/pending-crash-reports"))
+        XCTAssertTrue(config.propagateTraces)
+        XCTAssertNil(config.tracePropagationTargets)
+    }
+
+    func testTracePropagationWithNoTargetsCoversEveryHostAndPropagateTracesOffCoversNone() {
+        let config = Configuration()
+        XCTAssertTrue(config.shouldPropagateTrace(to: "api.example.com"))
+        XCTAssertTrue(config.shouldPropagateTrace(to: nil))
+
+        config.propagateTraces = false
+        XCTAssertFalse(config.shouldPropagateTrace(to: "api.example.com"))
+    }
+
+    func testTracePropagationHostTargetsMatchExactlyOrAsASubdomainOnADotBoundary() {
+        let config = Configuration()
+        config.tracePropagationTargets = ["example.com", ".Internal.Example"]
+
+        XCTAssertTrue(config.shouldPropagateTrace(to: "example.com"))
+        XCTAssertTrue(config.shouldPropagateTrace(to: "api.example.com"))
+        XCTAssertTrue(config.shouldPropagateTrace(to: "API.Example.COM"))
+        XCTAssertTrue(config.shouldPropagateTrace(to: "orders.internal.example"))
+        XCTAssertFalse(config.shouldPropagateTrace(to: "badexample.com"))
+        XCTAssertFalse(config.shouldPropagateTrace(to: "example.com.evil.io"))
+        XCTAssertFalse(config.shouldPropagateTrace(to: nil))
+
+        config.propagateTraces = false
+        XCTAssertFalse(config.shouldPropagateTrace(to: "api.example.com"))
+    }
+
+    func testTracePropagationPatternTargetsMatchTheLowercasedHostAndAnInvalidOneMatchesNothing() {
+        let config = Configuration()
+        config.tracePropagationTargets = [.pattern(#"\.svc$"#), .pattern("([")]
+
+        XCTAssertTrue(config.shouldPropagateTrace(to: "orders.svc"))
+        XCTAssertTrue(config.shouldPropagateTrace(to: "Orders.SVC"))
+        XCTAssertFalse(config.shouldPropagateTrace(to: "orders.svc.example.com"))
+        XCTAssertFalse(config.shouldPropagateTrace(to: "(["))
+        XCTAssertEqual(TracePropagationTarget(stringLiteral: "example.com"), .host("example.com"))
     }
 
     func testApiKeyAndIngestionURL() {

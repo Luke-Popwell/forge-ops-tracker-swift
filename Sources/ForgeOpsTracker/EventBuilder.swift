@@ -47,7 +47,7 @@ public enum EventBuilder {
         return regex
     }()
 
-    public static func buildEvent(exception: NSException, configuration: Configuration, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil) -> [String: Any] {
+    public static func buildEvent(exception: NSException, configuration: Configuration, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil, traceId: String? = nil) -> [String: Any] {
         buildEvent(
             exceptionClass: exception.name.rawValue,
             message: exception.reason ?? "",
@@ -56,11 +56,12 @@ public enum EventBuilder {
             configuration: configuration,
             context: context,
             user: user,
-            breadcrumbs: breadcrumbs
+            breadcrumbs: breadcrumbs,
+            traceId: traceId
         )
     }
 
-    public static func buildEvent(error: Error, configuration: Configuration, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil) -> [String: Any] {
+    public static func buildEvent(error: Error, configuration: Configuration, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil, traceId: String? = nil) -> [String: Any] {
         let nsError = error as NSError
         return buildEvent(
             exceptionClass: String(describing: type(of: error)),
@@ -70,7 +71,8 @@ public enum EventBuilder {
             configuration: configuration,
             context: context,
             user: user,
-            breadcrumbs: breadcrumbs
+            breadcrumbs: breadcrumbs,
+            traceId: traceId
         )
     }
 
@@ -83,7 +85,7 @@ public enum EventBuilder {
     // scrubbing has already run on everything else, is what keeps it a deliberate exemption
     // rather than an oversight: the whole point of this field is that it's deliberately
     // identifiable, not something to redact.
-    private static func buildEvent(exceptionClass: String, message: String, backtrace: [[String: Any]], sqlStatement: String?, configuration: Configuration, context: [String: Any]?, user: [String: Any]?, breadcrumbs: [[String: Any]]?) -> [String: Any] {
+    private static func buildEvent(exceptionClass: String, message: String, backtrace: [[String: Any]], sqlStatement: String?, configuration: Configuration, context: [String: Any]?, user: [String: Any]?, breadcrumbs: [[String: Any]]?, traceId: String?) -> [String: Any] {
         var payload: [String: Any] = [
             "exception_class": exceptionClass,
             "message": message,
@@ -127,6 +129,12 @@ public enum EventBuilder {
 
         if let user, !user.isEmpty {
             result["user"] = user
+        }
+        // The W3C trace id of the trace this error happened in (see Trace), which is what links it
+        // to errors other projects reported for the same request. Added after scrubbing, like
+        // user: it's a structured id this SDK generated, not free text, and must arrive intact.
+        if let traceId {
+            result["trace_id"] = traceId
         }
         return result
     }

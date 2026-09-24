@@ -67,6 +67,20 @@ public final class Configuration {
     /// client's default.
     public var traceCaptureThreshold: TimeInterval = 1
 
+    /// Whether `Trace.measureRequest`/`startRequestSpan` add a W3C `traceparent` header
+    /// (https://www.w3.org/TR/trace-context/) to the request, so a backend that also reports to
+    /// ForgeOps continues this trace instead of starting its own. On by default, matching
+    /// `gems/forge_ops_tracker`'s `propagate_traces`. Off still records the `http` span; it only
+    /// stops the header. A request that already has a `traceparent` is never changed.
+    public var propagateTraces: Bool = true
+
+    /// Which hosts get that header. `nil` (the default) means every host. Otherwise a host string
+    /// matches that exact host or any subdomain of it on a dot boundary ("example.com" matches
+    /// "api.example.com" but not "badexample.com"), and a `.pattern` is a regular expression
+    /// matched against the lowercased host. Worth narrowing when the app also calls third-party
+    /// APIs that reject unknown headers or shouldn't learn this app's trace ids.
+    public var tracePropagationTargets: [TracePropagationTarget]?
+
     /// How often the buffered `captureMetric`/`captureInfrastructureMetric` entries are flushed as one
     /// batch, in seconds (60 by default). There is no `trackMetrics` flag the way `trackPerformance` has
     /// one: these are explicit calls the host app's own code makes, not automatic instrumentation, so
@@ -147,5 +161,42 @@ public final class Configuration {
     public var isEnabled: Bool {
         guard let dsn, !dsn.isEmpty, apiKey != nil else { return false }
         return enabledEnvironments.contains(environment)
+    }
+
+    /// Whether a request to `host` should carry a `traceparent` header; see `propagateTraces` and
+    /// `tracePropagationTargets`. Case-insensitive, since hostnames are. A request with no host at
+    /// all only gets one when every host does.
+    func shouldPropagateTrace(to host: String?) -> Bool {
+        guard propagateTraces else { return false }
+        guard let targets = tracePropagationTargets else { return true }
+        guard let host = host?.lowercased(), !host.isEmpty else { return false }
+        return targets.contains { $0.matches(host: host) }
+    }
+}
+
+/// One entry in `Configuration.tracePropagationTargets`. A string literal is a `.host`, so a plain
+/// list of hosts reads naturally: `["example.com", .pattern(#"\.internal$"#)]`.
+public enum TracePropagationTarget: Equatable, ExpressibleByStringLiteral {
+    /// That exact host, or any subdomain of it on a dot boundary. Case-insensitive; a leading dot
+    /// is ignored.
+    case host(String)
+    /// A regular expression (`NSRegularExpression` syntax) matched anywhere in the lowercased host.
+    /// An invalid pattern matches nothing rather than crashing the host app.
+    case pattern(String)
+
+    public init(stringLiteral value: String) {
+        self = .host(value)
+    }
+
+    func matches(host: String) -> Bool {
+        switch self {
+        case let .host(target):
+            var target = target.lowercased()
+            if target.hasPrefix(".") { target.removeFirst() }
+            return !target.isEmpty && (host == target || host.hasSuffix("." + target))
+        case let .pattern(pattern):
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+            return regex.firstMatch(in: host, range: NSRange(host.startIndex..., in: host)) != nil
+        }
     }
 }

@@ -119,7 +119,9 @@ public enum ForgeOpsTracker {
 
         previousUncaughtExceptionHandler = NSGetUncaughtExceptionHandler()
         NSSetUncaughtExceptionHandler { exception in
-            ForgeOpsTracker.reporter.report(exception: exception, context: nil, user: ForgeOpsTracker.currentUser, breadcrumbs: ForgeOpsTracker.currentBreadcrumbs)
+            // The handler runs on the raising thread, so a trace whose synchronous body raised is
+            // still current here.
+            ForgeOpsTracker.reporter.report(exception: exception, context: nil, user: ForgeOpsTracker.currentUser, breadcrumbs: ForgeOpsTracker.currentBreadcrumbs, traceId: Trace.current?.traceId)
             // Chain to whatever handler (if any) was already installed: another crash reporter,
             // a debugger, or the host app's own: rather than silently replacing it, the same
             // "rethrow, don't swallow" invariant every other framework integration in this repo
@@ -138,9 +140,10 @@ public enum ForgeOpsTracker {
 
     /// Report an exception you've already caught, e.g. from your own `@try`/`@catch` across an
     /// Objective-C boundary. `user` defaults to whatever `setUser` last set, if anything; pass
-    /// one explicitly to override that for this one report.
-    public static func captureException(_ exception: NSException, context: [String: Any]? = nil, user: [String: Any]? = nil) {
-        reporter.report(exception: exception, context: context, user: user ?? currentUser, breadcrumbs: currentBreadcrumbs)
+    /// one explicitly to override that for this one report. `trace` links the report to that trace
+    /// (see `capture(error:context:user:trace:)`).
+    public static func captureException(_ exception: NSException, context: [String: Any]? = nil, user: [String: Any]? = nil, trace: Trace? = nil) {
+        reporter.report(exception: exception, context: context, user: user ?? currentUser, breadcrumbs: currentBreadcrumbs, traceId: (trace ?? Trace.current)?.traceId)
         uploadSoon()
     }
 
@@ -149,8 +152,14 @@ public enum ForgeOpsTracker {
     /// own `throws`/`catch` mechanism: an error a Swift function throws must always be handled or
     /// explicitly propagated by its caller, so there's no "uncaught Swift error" runtime event to
     /// hook the way there is for `NSException`. `user` defaults to whatever `setUser` last set.
-    public static func capture(error: Error, context: [String: Any]? = nil, user: [String: Any]? = nil) {
-        reporter.report(error: error, context: context, user: user ?? currentUser, breadcrumbs: currentBreadcrumbs)
+    ///
+    /// `trace` links the error to that trace: the event carries its `trace_id`, so ForgeOps shows it
+    /// next to a backend error from the same request (see `Trace.measureRequest`). Without one, the
+    /// trace whose synchronous body is running on this thread (`trace(_:_:)`, `measureSpan`,
+    /// `measureRequest`) is used, if any; async code should pass it explicitly. No trace, no
+    /// `trace_id`: the event is exactly what it was before.
+    public static func capture(error: Error, context: [String: Any]? = nil, user: [String: Any]? = nil, trace: Trace? = nil) {
+        reporter.report(error: error, context: context, user: user ?? currentUser, breadcrumbs: currentBreadcrumbs, traceId: (trace ?? Trace.current)?.traceId)
         uploadSoon()
     }
 
@@ -304,8 +313,10 @@ public enum ForgeOpsTracker {
 
     /// Distributed tracing: one flow's own call tree (a screen load, a sign-in, a network round trip
     /// and what it triggered), sent to ForgeOps only when the whole thing took at least
-    /// `Configuration.traceCaptureThreshold` (1s), so fast flows cost nothing on the wire. Traces are
-    /// per app: nothing is propagated across services.
+    /// `Configuration.traceCaptureThreshold` (1s), so fast flows cost nothing on the wire. An
+    /// outgoing request made with `trace.measureRequest` carries a W3C `traceparent` header, so a
+    /// backend that also reports to ForgeOps continues the trace, and an error captured inside the
+    /// trace carries its `trace_id`.
     ///
     ///     ForgeOpsTracker.trace("load home screen") { trace in
     ///         let feed = trace.measureSpan("fetch feed", kind: "http") { fetchFeed() }
@@ -333,10 +344,15 @@ public enum ForgeOpsTracker {
     }
 
     /// Runs `body` with a new trace and finishes it afterward, even if `body` throws (the error
-    /// propagates unchanged). `body` receives `nil` when tracing is off.
+    /// propagates unchanged). `body` receives `nil` when tracing is off. While `body` runs, the
+    /// trace is current on this thread, so `capture(error:)` there links to it.
     public static func trace<T>(_ name: String, _ body: (Trace?) throws -> T) rethrows -> T {
         let trace = startTrace(name)
-        defer { trace.finish() }
+        if let trace { Trace.pushCurrent(trace) }
+        defer {
+            if let trace { Trace.popCurrent(trace) }
+            trace.finish()
+        }
         return try body(trace)
     }
 

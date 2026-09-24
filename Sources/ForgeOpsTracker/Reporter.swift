@@ -32,16 +32,16 @@ public final class Reporter {
 
     /// Called from the uncaught exception handler (or explicitly, for a caught-but-notable
     /// exception).
-    public func report(exception: NSException, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil) {
+    public func report(exception: NSException, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil, traceId: String? = nil) {
         guard configuration.isEnabled else { return }
-        let payload = EventBuilder.buildEvent(exception: exception, configuration: configuration, context: context, user: user, breadcrumbs: breadcrumbs)
+        let payload = EventBuilder.buildEvent(exception: exception, configuration: configuration, context: context, user: user, breadcrumbs: breadcrumbs, traceId: traceId)
         crashStore.write(payload: payload)
     }
 
     /// Called for a plain Swift `Error` you've already caught.
-    public func report(error: Error, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil) {
+    public func report(error: Error, context: [String: Any]?, user: [String: Any]? = nil, breadcrumbs: [[String: Any]]? = nil, traceId: String? = nil) {
         guard configuration.isEnabled else { return }
-        let payload = EventBuilder.buildEvent(error: error, configuration: configuration, context: context, user: user, breadcrumbs: breadcrumbs)
+        let payload = EventBuilder.buildEvent(error: error, configuration: configuration, context: context, user: user, breadcrumbs: breadcrumbs, traceId: traceId)
         crashStore.write(payload: payload)
     }
 
