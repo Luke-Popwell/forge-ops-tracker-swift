@@ -89,6 +89,56 @@ final class TraceTests: XCTestCase {
         XCTAssertEqual(span("r", in: trace)?["kind"] as? String, "database")
     }
 
+    func testADatabaseSpanSendsItsStatementMaskedAsDbStatementWithDbSystem() throws {
+        configure(threshold: 0.01)
+
+        ForgeOpsTracker.trace("t") { trace in
+            trace.measureSpan("Load orders", kind: "database", data: ["rows": 3],
+                              statement: "SELECT * FROM orders WHERE email = 'a@b.co' AND total > 4200", dbSystem: "SQLite") {
+                Thread.sleep(forTimeInterval: 0.03)
+            }
+            trace.recordSpan("Count", kind: "database", startedAt: Date(), durationMs: 1,
+                             data: ["db.statement": "SELECT count(*) FROM carts WHERE token = 'secret-token'"])
+            trace.recordSpan("Not db", kind: "service", startedAt: Date(), durationMs: 1, statement: "SELECT 'x'", dbSystem: "sqlite")
+        }
+        ForgeOpsTracker.flushSpans()
+
+        let trace = try deliveredTrace()
+        let load = try XCTUnwrap(span("Load orders", in: trace)?["data"] as? [String: Any])
+        XCTAssertEqual(load["db.statement"] as? String, "SELECT * FROM orders WHERE email = ? AND total > ?")
+        XCTAssertEqual(load["db.system"] as? String, "sqlite")
+        XCTAssertEqual(load["rows"] as? Int, 3)
+        let count = try XCTUnwrap(span("Count", in: trace)?["data"] as? [String: Any])
+        XCTAssertEqual(count["db.statement"] as? String, "SELECT count(*) FROM carts WHERE token = ?")
+        XCTAssertNil(count["db.system"])
+        XCTAssertEqual((span("Not db", in: trace)?["data"] as? [String: Any])?.count, 0)
+        let wire = try XCTUnwrap(server.allRequests().last?.body)
+        XCTAssertFalse(wire.contains("a@b.co"))
+        XCTAssertFalse(wire.contains("secret-token"))
+    }
+
+    func testADatabaseStatementIsCutAt4000Characters() throws {
+        let sql = "SELECT " + String(repeating: "a, ", count: 3000) + "b FROM t"
+        let data = try XCTUnwrap(Trace.spanData(kind: "database", data: nil, statement: sql, dbSystem: nil))
+        let statement = try XCTUnwrap(data["db.statement"] as? String)
+        XCTAssertEqual(statement.count, 4003)
+        XCTAssertTrue(statement.hasSuffix("..."))
+    }
+
+    func testTheOptionalFormsForwardTheStatement() throws {
+        configure(threshold: 0.01)
+
+        let trace: Trace? = ForgeOpsTracker.startTrace("t")
+        trace.measureSpan("q", kind: "database", statement: "SELECT 1 FROM t WHERE id = 7", dbSystem: "sqlite") {
+            Thread.sleep(forTimeInterval: 0.03)
+        }
+        trace.finish()
+        ForgeOpsTracker.flushSpans()
+
+        let data = try XCTUnwrap(span("q", in: try deliveredTrace())?["data"] as? [String: Any])
+        XCTAssertEqual(data["db.statement"] as? String, "SELECT ? FROM t WHERE id = ?")
+    }
+
     func testABodyThatThrowsStillRecordsItsSpanSendsTheTraceAndRethrowsUnchanged() throws {
         configure(threshold: 0.01)
 

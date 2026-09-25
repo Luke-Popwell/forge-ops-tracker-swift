@@ -46,8 +46,16 @@ public final class Trace {
 
     /// Times `body` as a span (a child of whatever span is open on this thread, or of the root),
     /// recording it even if `body` throws, and returns whatever `body` returned.
+    ///
+    /// For a `"database"` span, `statement` is the SQL it ran (a local SQLite query, say) and
+    /// `dbSystem` which database it was ("sqlite"): sent in the span's data as `db.statement`, with
+    /// every string and number literal replaced by "?" first so values never leave the device, and
+    /// `db.system`, lowercased. Both are ignored on any other kind.
+    ///
+    ///     let rows = try trace.measureSpan("Load orders", kind: "database", statement: sql, dbSystem: "sqlite") { try db.query(sql) }
     @discardableResult
-    public func measureSpan<T>(_ name: String, kind: String = "service", data: [String: Any]? = nil, _ body: () throws -> T) rethrows -> T {
+    public func measureSpan<T>(_ name: String, kind: String = "service", data: [String: Any]? = nil,
+                               statement: String? = nil, dbSystem: String? = nil, _ body: () throws -> T) rethrows -> T {
         let spanId = Trace.generateSpanId()
         let parent = currentParent()
         pushOpen(spanId)
@@ -58,14 +66,37 @@ public final class Trace {
             Trace.popCurrent(self)
             popOpen(spanId)
             store(span(id: spanId, parent: parent, name: name, kind: kind, startedAt: spanStartedAt,
-                       durationMs: Double(DispatchTime.now().uptimeNanoseconds - spanTimer) / 1_000_000, data: data))
+                       durationMs: Double(DispatchTime.now().uptimeNanoseconds - spanTimer) / 1_000_000,
+                       data: Trace.spanData(kind: kind, data: data, statement: statement, dbSystem: dbSystem)))
         }
         return try body()
     }
 
     /// Records a span you timed yourself, under whatever is open on this thread (or the root).
-    public func recordSpan(_ name: String, kind: String = "service", startedAt: Date, durationMs: Double, data: [String: Any]? = nil) {
-        store(span(id: Trace.generateSpanId(), parent: currentParent(), name: name, kind: kind, startedAt: startedAt, durationMs: durationMs, data: data))
+    /// `statement` and `dbSystem` work as they do on `measureSpan`, for a `"database"` span only.
+    public func recordSpan(_ name: String, kind: String = "service", startedAt: Date, durationMs: Double, data: [String: Any]? = nil,
+                           statement: String? = nil, dbSystem: String? = nil) {
+        store(span(id: Trace.generateSpanId(), parent: currentParent(), name: name, kind: kind, startedAt: startedAt, durationMs: durationMs,
+                   data: Trace.spanData(kind: kind, data: data, statement: statement, dbSystem: dbSystem)))
+    }
+
+    /// A span's data, with a `"database"` span's SQL added as `db.statement` (masked, cut at 4000
+    /// characters) and its `db.system`. A `db.statement` passed in `data` directly is masked too, so
+    /// raw SQL can never go out on a span.
+    static func spanData(kind: String, data: [String: Any]?, statement: String?, dbSystem: String?) -> [String: Any]? {
+        guard kind == "database" else { return data }
+        var result = data ?? [:]
+        let raw = statement ?? (result["db.statement"] as? String)
+        result["db.statement"] = nil
+        if let masked = SqlStatement.mask(raw) {
+            result["db.statement"] = masked
+        }
+        let system = (dbSystem ?? (result["db.system"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        result["db.system"] = nil
+        if let system, !system.isEmpty {
+            result["db.system"] = system.lowercased()
+        }
+        return result
     }
 
     /// Starts an `http` span for one outgoing request and returns it with the request to send:
@@ -249,15 +280,17 @@ public final class Trace {
 /// these forward to the body unchanged in that case: callers never need to unwrap.
 public extension Optional where Wrapped == Trace {
     @discardableResult
-    func measureSpan<T>(_ name: String, kind: String = "service", data: [String: Any]? = nil, _ body: () throws -> T) rethrows -> T {
+    func measureSpan<T>(_ name: String, kind: String = "service", data: [String: Any]? = nil,
+                        statement: String? = nil, dbSystem: String? = nil, _ body: () throws -> T) rethrows -> T {
         if let trace = self {
-            return try trace.measureSpan(name, kind: kind, data: data, body)
+            return try trace.measureSpan(name, kind: kind, data: data, statement: statement, dbSystem: dbSystem, body)
         }
         return try body()
     }
 
-    func recordSpan(_ name: String, kind: String = "service", startedAt: Date, durationMs: Double, data: [String: Any]? = nil) {
-        self?.recordSpan(name, kind: kind, startedAt: startedAt, durationMs: durationMs, data: data)
+    func recordSpan(_ name: String, kind: String = "service", startedAt: Date, durationMs: Double, data: [String: Any]? = nil,
+                    statement: String? = nil, dbSystem: String? = nil) {
+        self?.recordSpan(name, kind: kind, startedAt: startedAt, durationMs: durationMs, data: data, statement: statement, dbSystem: dbSystem)
     }
 
     func finish() {

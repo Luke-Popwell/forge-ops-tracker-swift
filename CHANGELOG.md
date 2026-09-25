@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 (2026-09-25)
+
+- A `database` span can now carry the SQL it ran, such as a local SQLite query: pass `statement:`
+  (and optionally `dbSystem:`, such as `"sqlite"`) to `measureSpan` or `recordSpan`. The statement is
+  masked on the device (every string and number literal becomes `?`), cut at 4000 characters, and
+  sent in the span's data as `db.statement`, with `db.system` lowercased. A `db.statement` put in
+  `data` directly is masked the same way. Both are ignored on spans of any other kind.
+
 ## 0.5.0 (2026-09-25)
 
 - New `ForgeOpsTracker.recordChange(_:title:details:environment:service:actor:url:id:occurredAt:)`

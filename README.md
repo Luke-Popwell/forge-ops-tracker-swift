@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.5.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.6.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -218,6 +218,24 @@ flushed at exit and an iOS app is suspended shortly after it backgrounds, so cal
 `ForgeOpsTracker.flushSpans()` (synchronous, on a background queue if you would rather not block the
 main thread) from `applicationDidEnterBackground` or before a command-line tool quits. Turn the
 feature off with `config.trackTracing = false`.
+
+### Database spans with their SQL
+
+A `database` span can carry the SQL it ran (a query against the app's local SQLite database, say)
+and which database it was. Every string and number literal is replaced by `?` before it leaves the
+device (so `WHERE email = 'a@b.co'` is sent as `WHERE email = ?`), the statement is cut at 4000
+characters, and ForgeOps masks it again on arrival. It is sent in the span's data as `db.statement`
+and `db.system`, and ForgeOps shows it on the span. Both parameters are ignored on any other kind.
+
+```swift
+let sql = "SELECT * FROM messages WHERE thread_id = 42 AND read = 0"
+let messages = trace.measureSpan("Load messages", kind: "database", statement: sql, dbSystem: "sqlite") {
+    try? database.query(sql)
+}
+// Sent as db.statement "SELECT * FROM messages WHERE thread_id = ? AND read = ?", db.system "sqlite".
+```
+
+`recordSpan` takes the same `statement:` and `dbSystem:` parameters for a query you timed yourself.
 
 ### Connecting app errors to your backend
 
