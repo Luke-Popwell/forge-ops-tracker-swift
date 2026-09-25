@@ -30,6 +30,11 @@ public enum ForgeOpsTracker {
     private static var sharedMetricBuffers: (custom: MetricBuffer, infrastructure: MetricBuffer)?
     private static let metricLock = NSLock()
     private static let spanLock = NSLock()
+    private static var sharedChangeClient: Client?
+    private static let changeLock = NSLock()
+    /// Serial, so changes are sent in the order they were recorded, and off the caller's thread,
+    /// since `Client.deliver*` blocks on the network.
+    private static let changeQueue = DispatchQueue(label: "com.forgeops.tracker.changes", qos: .utility)
 
     /// The affected user set via `setUser`, if any. A mobile app install is effectively
     /// single-user (unlike a server handling many concurrent requests at once, the reason
@@ -311,6 +316,59 @@ public enum ForgeOpsTracker {
         buffers?.infrastructure.flush()
     }
 
+    /// Records one change to what the app is running: a feature flag flipped, a remote config value
+    /// updated, anything that could explain a shift in crashes or errors. ForgeOps shows it on the
+    /// timeline next to the errors around it. `kind` is one of feature_flag, config, migration,
+    /// dependency, infrastructure, other (anything else is sent as `"other"`); `title` is required and
+    /// cut to 200 characters. `details` is a small JSON object; `environment` defaults to
+    /// `Configuration.environment`; `url` must be http(s); `id` is an idempotency key.
+    ///
+    /// Returns immediately: the change is sent on a private serial queue, off the calling thread, and
+    /// nothing here ever throws or crashes the app, whether the request fails or the plan doesn't
+    /// include change tracking. A no-op when reporting isn't enabled for this environment.
+    ///
+    ///     flags.onChange { key, oldValue, newValue in
+    ///         ForgeOpsTracker.recordChange("feature_flag", title: "\(key) turned \(newValue ? "on" : "off")",
+    ///                                      details: ["key": key, "from": oldValue, "to": newValue])
+    ///     }
+    public static func recordChange(
+        _ kind: String,
+        title: String,
+        details: [String: Any]? = nil,
+        environment: String? = nil,
+        service: String? = nil,
+        actor: String? = nil,
+        url: String? = nil,
+        id: String? = nil,
+        occurredAt: Date? = nil
+    ) {
+        let config = configuration
+        guard config.isEnabled else { return }
+        guard let payload = Change.payload(
+            kind: kind, title: title, details: details, environment: environment, service: service,
+            actor: actor, url: url, id: id, occurredAt: occurredAt, configuration: config
+        ) else {
+            NSLog("[forge-ops-tracker] dropped a change with no title")
+            return
+        }
+
+        changeLock.lock()
+        if sharedChangeClient == nil {
+            sharedChangeClient = Client(configuration: config)
+        }
+        let client = sharedChangeClient!
+        changeLock.unlock()
+
+        changeQueue.async {
+            client.deliverChange(payload)
+        }
+    }
+
+    /// Not part of the public API: blocks until every change recorded so far has been sent.
+    static func _waitForChanges() {
+        changeQueue.sync {}
+    }
+
     /// Distributed tracing: one flow's own call tree (a screen load, a sign-in, a network round trip
     /// and what it triggered), sent to ForgeOps only when the whole thing took at least
     /// `Configuration.traceCaptureThreshold` (1s), so fast flows cost nothing on the wire. An
@@ -397,6 +455,10 @@ public enum ForgeOpsTracker {
         sharedSpanQueue?.discard()
         sharedSpanQueue = nil
         spanLock.unlock()
+        changeQueue.sync {}
+        changeLock.lock()
+        sharedChangeClient = nil
+        changeLock.unlock()
         // Deliberately not touching the real NSUncaughtExceptionHandler/signal dispositions here:
         // resetting those between test runs would risk leaving the *test process itself*
         // without a safety net if a later, unrelated test genuinely crashes. Same reasoning as

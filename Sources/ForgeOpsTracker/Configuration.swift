@@ -137,6 +137,9 @@ public final class Configuration {
     /// Same derivation again, swapping the trailing `/events` for `/infrastructure_metrics`.
     public var infrastructureMetricsURL: URL? { swappingEventsSuffix(for: "/infrastructure_metrics") }
 
+    /// Same derivation again, swapping the trailing `/events` for `/changes`.
+    public var changesURL: URL? { swappingEventsSuffix(for: "/changes") }
+
     private func swappingEventsSuffix(for replacement: String) -> URL? {
         guard var components = parsedDSN() else { return nil }
         components.user = nil

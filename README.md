@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.4.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.5.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -337,6 +337,43 @@ succeeds, since a plan without the feature rejects every flush and would otherwi
 as the process lives. A NaN or infinite value is dropped at capture: `JSONSerialization` raises an
 Objective-C exception for one, which Swift cannot catch, so it would crash the host app. Requires a
 ForgeOps plan that includes custom metrics / infrastructure monitoring.
+
+## Recording changes
+
+When a feature flag flips or a remote config value changes, tell ForgeOps, and it shows the change on
+the timeline next to the errors around it, so "crashes started right after `new_checkout` turned on"
+is one glance instead of an investigation. Call `recordChange` from your flag or config client's
+change callback:
+
+```swift
+import ForgeOpsTracker
+
+ForgeOpsTracker.configure { config in
+    config.dsn = "https://<api_key>@getforgeops.net/api/v1/events"
+}
+
+// Your flag client's change listener: whatever it calls with the key and the old and new values.
+flagClient.onFlagChanged { key, oldValue, newValue in
+    ForgeOpsTracker.recordChange(
+        "feature_flag",
+        title: "\(key) turned \(newValue ? "on" : "off")",
+        details: ["key": key, "from": oldValue, "to": newValue],
+        actor: "flag-service"
+    )
+}
+```
+
+`kind` is one of `"feature_flag"`, `"config"`, `"migration"`, `"dependency"`, `"infrastructure"`, or
+`"other"`; anything else is sent as `"other"`. The title is required and cut to 200 characters.
+Optional: `details` (a small JSON dictionary; one `JSONSerialization` can't encode, such as a NaN or a
+`Date`, is left out rather than crashing the app), `environment` (defaults to the configured one),
+`service`, `actor`, `url` (http or https), `id` (an idempotency key, so recording the same change twice
+keeps one), and `occurredAt` (default now).
+
+`recordChange` returns immediately and sends the change on a private serial queue, off the calling
+thread (the main thread included). It never throws or crashes, whether the request fails or your plan
+doesn't include change tracking (that 403 is silent), and it's a no-op when reporting isn't enabled for
+the environment.
 
 ## Why upload happens on the *next* launch, not live during the crash
 

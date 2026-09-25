@@ -63,6 +63,14 @@ public final class Client {
         post(trace, to: configuration.spansURL)
     }
 
+    /// Same delivery contract again, against the DSN's changes endpoint (see
+    /// `Configuration.changesURL`). A 403 (a plan without change tracking) is just a `false` like
+    /// any other rejection.
+    @discardableResult
+    public func deliverChange(_ change: [String: Any]) -> Bool {
+        post(change, to: configuration.changesURL)
+    }
+
     private func post(_ payload: [String: Any], to url: URL?) -> Bool {
         guard let url, let apiKey = configuration.apiKey else {
             return false
