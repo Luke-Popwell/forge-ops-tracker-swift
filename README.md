@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.6.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.7.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -236,6 +236,10 @@ let messages = trace.measureSpan("Load messages", kind: "database", statement: s
 ```
 
 `recordSpan` takes the same `statement:` and `dbSystem:` parameters for a query you timed yourself.
+Strings with backslash escapes (`'o\'brien'`) or a type prefix (`E''`, `X''`, `N''`, `B''`,
+`U&''`) and hex, binary and exponent numbers (`0x1F`, `0b101`, `1.5E-3`) are masked too, and with
+`dbSystem` `"mysql"` or `"mariadb"` so is "double quoted" text, a string there; on any other
+database it's a name and is left alone.
 
 ### Connecting app errors to your backend
 

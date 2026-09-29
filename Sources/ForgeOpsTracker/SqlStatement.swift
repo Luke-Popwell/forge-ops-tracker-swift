@@ -27,10 +27,26 @@ enum SqlStatement {
         return compiled
     }
 
-    private static let literal = regex(
-        #"'(?:[^']|'')*(?:'|\z)|(\$[A-Za-z_]*\$).*?(?:\1|\z)|(?<![\w$.])\d+(?:\.\d+)?(?!\w)"#,
-        [.dotMatchesLineSeparators]
+    // The server's pattern, piece by piece. ICU's \w and \d also match non-ASCII letters and digits
+    // (and \h is whitespace, not hex), so the ASCII classes are spelled out to match it exactly.
+    // A string: '' and \' are escaped quotes, one cut off by truncation (even right after a
+    // backslash) is masked to the end, and an E/X/N/B/U& prefix goes with it, but only when it isn't
+    // the end of a longer word (the quote itself always starts a string, so LIKE'%x%' is still
+    // masked, to LIKE?).
+    private static let stringLiteral = #"(?:(?<![A-Za-z0-9_$])(?:[EeXxNnBb]|[Uu]&))?'(?:[^'\\]|\\(?:.|\z)|'')*(?:'|\z)"#
+    // MySQL and MariaDB only: "double quoted" is a string there, escaped the same way.
+    private static let doubleQuotedString = #""(?:[^"\\]|\\(?:.|\z)|"")*(?:"|\z)"#
+    private static let dollarQuoted = #"(\$[A-Za-z_]*\$).*?(?:\1|\z)"#
+    // Integers, decimals (.5 too), exponents, hex and binary, never digits inside an identifier.
+    private static let number =
+        #"(?<![A-Za-z0-9_$.])(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)(?![A-Za-z0-9_])"#
+
+    private static let literal = regex([stringLiteral, dollarQuoted, number].joined(separator: "|"), [.dotMatchesLineSeparators])
+    private static let literalWithDoubleQuotes = regex(
+        [stringLiteral, doubleQuotedString, dollarQuoted, number].joined(separator: "|"), [.dotMatchesLineSeparators]
     )
+    /// `db.system` values where "double quotes" are a string, not a name.
+    private static let doubleQuotedStringSystems: Set<String> = ["mysql", "mariadb"]
 
     private static let part = #"(?:[\w$#@]+|"[^"]+"|\[[^\]]+\]|`[^`]+`)"#
     private static let name = part + #"(?:\."# + part + ")*"
@@ -108,10 +124,14 @@ enum SqlStatement {
 
     // MARK: - Masking
 
-    static func mask(_ statement: String?) -> String? {
+    /// `system` is the database's `db.system` when known: for `"mysql"` or `"mariadb"` (any case),
+    /// "double quoted" text is a string and is masked too; otherwise it's an identifier and is left
+    /// alone.
+    static func mask(_ statement: String?, system: String? = nil) -> String? {
         guard let statement, !statement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let pattern = doubleQuotedStringSystems.contains(system?.lowercased() ?? "") ? literalWithDoubleQuotes : literal
         let range = NSRange(statement.startIndex..., in: statement)
-        let masked = literal.stringByReplacingMatches(in: statement, options: [], range: range, withTemplate: mask)
+        let masked = pattern.stringByReplacingMatches(in: statement, options: [], range: range, withTemplate: mask)
         return masked.count > maxLength ? String(masked.prefix(maxLength)) + "..." : masked
     }
 

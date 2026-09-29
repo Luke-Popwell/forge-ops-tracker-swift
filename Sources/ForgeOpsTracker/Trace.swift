@@ -82,19 +82,20 @@ public final class Trace {
 
     /// A span's data, with a `"database"` span's SQL added as `db.statement` (masked, cut at 4000
     /// characters) and its `db.system`. A `db.statement` passed in `data` directly is masked too, so
-    /// raw SQL can never go out on a span.
+    /// raw SQL can never go out on a span. The statement is masked for that `db.system`, so a MySQL
+    /// or MariaDB statement's "double quoted" strings are masked as well.
     static func spanData(kind: String, data: [String: Any]?, statement: String?, dbSystem: String?) -> [String: Any]? {
         guard kind == "database" else { return data }
         var result = data ?? [:]
-        let raw = statement ?? (result["db.statement"] as? String)
-        result["db.statement"] = nil
-        if let masked = SqlStatement.mask(raw) {
-            result["db.statement"] = masked
-        }
-        let system = (dbSystem ?? (result["db.system"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let system = (dbSystem ?? (result["db.system"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         result["db.system"] = nil
         if let system, !system.isEmpty {
-            result["db.system"] = system.lowercased()
+            result["db.system"] = system
+        }
+        let raw = statement ?? (result["db.statement"] as? String)
+        result["db.statement"] = nil
+        if let masked = SqlStatement.mask(raw, system: system) {
+            result["db.statement"] = masked
         }
         return result
     }

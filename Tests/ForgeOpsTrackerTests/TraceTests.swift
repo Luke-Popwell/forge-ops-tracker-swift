@@ -125,6 +125,17 @@ final class TraceTests: XCTestCase {
         XCTAssertTrue(statement.hasSuffix("..."))
     }
 
+    func testAMysqlOrMariadbStatementHasItsDoubleQuotedStringsMaskedToo() throws {
+        let sql = #"SELECT "a'b" = 'c' AND token = "tok-secret""#
+        let mysql = try XCTUnwrap(Trace.spanData(kind: "database", data: nil, statement: sql, dbSystem: " MySQL "))
+        XCTAssertEqual(mysql["db.statement"] as? String, "SELECT ? = ? AND token = ?")
+        XCTAssertEqual(mysql["db.system"] as? String, "mysql")
+        let maria = try XCTUnwrap(Trace.spanData(kind: "database", data: ["db.statement": sql, "db.system": "MariaDB"], statement: nil, dbSystem: nil))
+        XCTAssertEqual(maria["db.statement"] as? String, "SELECT ? = ? AND token = ?")
+        let postgres = try XCTUnwrap(Trace.spanData(kind: "database", data: nil, statement: #"SELECT "user id" FROM t"#, dbSystem: "postgresql"))
+        XCTAssertEqual(postgres["db.statement"] as? String, #"SELECT "user id" FROM t"#)
+    }
+
     func testTheOptionalFormsForwardTheStatement() throws {
         configure(threshold: 0.01)
 
