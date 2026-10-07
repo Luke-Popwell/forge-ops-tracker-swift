@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 (2026-10-07)
+
+- The package now ships its MIT licence (`LICENSE.txt`). Earlier versions were published without one. No code changes.
+
 ## 0.7.0 (2026-09-29)
 
 - SQL masking now catches values it used to let through, matching ForgeOps's own masker again: a
