@@ -38,6 +38,30 @@ final class ClientTests: XCTestCase {
         XCTAssertFalse(client.deliver(["message": "boom"]))
     }
 
+    func testAttemptTellsARejectedPayloadFromOneThatFailedForNow() {
+        let config = testConfiguration(dsn: "https://key@forgeops.example/events")
+        let client = Client(configuration: config, protocolClasses: [StubURLProtocol.self])
+
+        for status in [400, 401, 403, 404, 413, 422] {
+            StubURLProtocol.statusCode = status
+            XCTAssertEqual(client.attempt(["message": "boom"]), .rejected(status: status))
+        }
+        for status in [408, 429, 500, 502, 503] {
+            StubURLProtocol.statusCode = status
+            XCTAssertEqual(client.attempt(["message": "boom"]), .failed(status: status))
+        }
+        StubURLProtocol.statusCode = 204
+        XCTAssertEqual(client.attempt(["message": "boom"]), .delivered)
+    }
+
+    func testAttemptFailsForNowWhenUnreachable() {
+        let config = testConfiguration(dsn: "http://key@127.0.0.1:1/events")
+        config.timeout = 0.5
+        let client = Client(configuration: config)
+
+        XCTAssertEqual(client.attempt(["message": "boom"]), .failed(status: 0))
+    }
+
     func testDeliverReturnsFalseWithNoDSN() {
         let config = Configuration()
         let client = Client(configuration: config, protocolClasses: [StubURLProtocol.self])

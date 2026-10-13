@@ -119,7 +119,12 @@ final class TestHTTPServer {
         requests.append((method: method, path: path, headers: headers, body: body))
         lock.unlock()
 
-        let status = path == "/unauthorized" ? "401 Unauthorized" : "202 Accepted"
+        let status: String
+        switch path {
+        case "/unauthorized": status = "401 Unauthorized"
+        case "/unavailable": status = "503 Service Unavailable"
+        default: status = "202 Accepted"
+        }
         let response = "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         let responseData = Data(response.utf8)
         responseData.withUnsafeBytes { ptr in

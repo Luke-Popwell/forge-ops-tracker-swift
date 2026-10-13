@@ -79,4 +79,51 @@ final class ReporterTests: XCTestCase {
 
         XCTAssertEqual(CrashStore(configuration: config).pendingPayloadURLs().count, 1)
     }
+
+    func testUploadPendingReportsLeavesAFileInPlaceWhenTheServerIsUnreachable() {
+        config.dsn = "http://key@127.0.0.1:1/events" // nothing listens there
+        config.timeout = 0.5
+        let r = Reporter(configuration: config, client: Client(configuration: config))
+        r.report(exception: FOTRaiseAndCatchTestException("Boom", "bad"), context: nil)
+
+        r.uploadPendingReports()
+
+        XCTAssertEqual(CrashStore(configuration: config).pendingPayloadURLs().count, 1)
+    }
+
+    func testUploadPendingReportsDeletesAReportTheServerRejectsAndNeverSendsItAgain() {
+        StubURLProtocol.statusCode = 422
+        let r = reporter()
+        r.report(exception: FOTRaiseAndCatchTestException("Boom", "bad"), context: nil)
+
+        r.uploadPendingReports()
+        XCTAssertTrue(CrashStore(configuration: config).pendingPayloadURLs().isEmpty)
+
+        r.uploadPendingReports()
+        XCTAssertEqual(StubURLProtocol.recorded.count, 1)
+    }
+
+    func testUploadPendingReportsKeepsAReportTheServerAsksToRetry() {
+        let r = reporter()
+        r.report(exception: FOTRaiseAndCatchTestException("Boom", "bad"), context: nil)
+
+        for status in [408, 429] {
+            StubURLProtocol.statusCode = status
+            r.uploadPendingReports()
+            XCTAssertEqual(CrashStore(configuration: config).pendingPayloadURLs().count, 1)
+        }
+    }
+
+    func testARejectedReportDoesNotHoldUpTheOnesBehindIt() {
+        let r = reporter()
+        r.report(exception: FOTRaiseAndCatchTestException("First", "bad"), context: nil)
+        Thread.sleep(forTimeInterval: 0.01)
+        r.report(exception: FOTRaiseAndCatchTestException("Second", "bad"), context: nil)
+        StubURLProtocol.statusCode = 400
+
+        r.uploadPendingReports()
+
+        XCTAssertEqual(StubURLProtocol.recorded.count, 2)
+        XCTAssertTrue(CrashStore(configuration: config).pendingPayloadURLs().isEmpty)
+    }
 }

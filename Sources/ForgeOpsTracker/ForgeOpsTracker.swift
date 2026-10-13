@@ -81,8 +81,8 @@ public enum ForgeOpsTracker {
             let config = configuration
             let client = Client(configuration: config)
             sharedMetricBuffers = (
-                MetricBuffer(configuration: config, deliver: { client.deliverMetrics($0) }, interval: { config.metricFlushInterval }),
-                MetricBuffer(configuration: config, deliver: { client.deliverInfrastructureMetrics($0) }, interval: { config.infrastructureMetricFlushInterval })
+                MetricBuffer(configuration: config, attempt: { client.attemptMetrics($0) }, interval: { config.metricFlushInterval }),
+                MetricBuffer(configuration: config, attempt: { client.attemptInfrastructureMetrics($0) }, interval: { config.infrastructureMetricFlushInterval })
             )
         }
         return sharedMetricBuffers!
@@ -274,8 +274,10 @@ public enum ForgeOpsTracker {
     /// serial queue, off the calling thread. Every entry is stored as captured (a signup is a row, not a
     /// running total), so a count or sum computed later is exact. Both are a no-op when reporting isn't
     /// enabled for this environment, and a NaN or infinite value is dropped. A buffer holds at most
-    /// `MetricBuffer.maxEntries` entries and drops further ones until a flush succeeds; a failed delivery
-    /// keeps every entry, and one captured while a delivery is in flight is kept too.
+    /// `MetricBuffer.maxEntries` entries and drops further ones until a flush succeeds; a delivery that
+    /// failed for now keeps every entry (for up to five flushes in a row, then the batch is dropped), a
+    /// batch the server rejects is dropped at once, and an entry captured while a delivery is in flight
+    /// is kept.
     ///
     ///     ForgeOpsTracker.captureMetric("signup")
     ///     ForgeOpsTracker.captureMetric("payment", value: 49)

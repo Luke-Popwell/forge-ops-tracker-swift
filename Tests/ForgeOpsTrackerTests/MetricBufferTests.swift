@@ -99,6 +99,62 @@ final class MetricBufferTests: XCTestCase {
         XCTAssertEqual(delivered, [["a"], ["a", "b"]])
     }
 
+    func testARejectedBatchIsDroppedAndNeverSentAgain() {
+        var delivered: [[String]] = []
+        let buffer = MetricBuffer(configuration: makeConfiguration(), attempt: { entries in
+            delivered.append(self.names(entries))
+            return .rejected(status: 403)
+        }, interval: { 3600 })
+        buffers.append(buffer)
+
+        buffer.record(["metric_name": "a", "value": 1])
+        buffer.flush()
+        XCTAssertEqual(buffer.count, 0)
+        buffer.flush() // nothing left: no second delivery
+        buffer.record(["metric_name": "b", "value": 2])
+        buffer.flush()
+
+        XCTAssertEqual(delivered, [["a"], ["b"]])
+    }
+
+    func testTheFifthFailedFlushInARowDropsTheBatch() {
+        var calls = 0
+        let buffer = MetricBuffer(configuration: makeConfiguration(), attempt: { _ in
+            calls += 1
+            return .failed(status: 503)
+        }, interval: { 3600 })
+        buffers.append(buffer)
+
+        buffer.record(["metric_name": "a", "value": 1])
+        for _ in 0 ..< 4 {
+            buffer.flush()
+        }
+        XCTAssertEqual(buffer.count, 1)
+
+        buffer.flush()
+        XCTAssertEqual(buffer.count, 0)
+        XCTAssertEqual(calls, 5)
+
+        // The count starts again with the next batch.
+        buffer.record(["metric_name": "b", "value": 2])
+        buffer.flush()
+        XCTAssertEqual(buffer.count, 1)
+    }
+
+    func testAnEntryRecordedWhileAFailingDeliveryIsInFlightOutlivesTheDroppedBatch() {
+        let buffer = MetricBuffer(configuration: makeConfiguration(), attempt: { _ in .rejected(status: 422) }, interval: { 3600 })
+        buffers.append(buffer)
+        buffer.record(["metric_name": "first", "value": 1])
+        buffer.beforeDeliveryHook = { [unowned buffer] in
+            buffer.beforeDeliveryHook = nil
+            buffer.record(["metric_name": "during", "value": 2])
+        }
+
+        buffer.flush()
+
+        XCTAssertEqual(buffer.count, 1)
+    }
+
     func testAnEntryRecordedWhileDeliveryIsInFlightIsNeverLost() {
         var delivered: [[String]] = []
         let buffer = makeBuffer(makeConfiguration()) { delivered.append(self.names($0)); return true }
@@ -168,6 +224,26 @@ final class MetricBufferTests: XCTestCase {
         let readings = try XCTUnwrap(infraBody["metrics"] as? [[String: Any]])
         XCTAssertEqual(readings[0]["hostname"] as? String, "db-1")
         XCTAssertEqual(readings[1]["hostname"] as? String, "web-1")
+    }
+
+    func testCaptureMetricDropsABatchTheServerRejectsAndKeepsOneItCouldNotTakeYet() {
+        let config = ForgeOpsTracker.configure { config in
+            config.dsn = "http://key@127.0.0.1:\(server.port)/unauthorized"
+            config.enabledEnvironments = ["production"]
+            config.environment = "production"
+            config.crashReportsDirectory = tempDirectory
+        }
+
+        ForgeOpsTracker.captureMetric("signup")
+        ForgeOpsTracker.flushMetrics() // 401: dropped
+        ForgeOpsTracker.flushMetrics() // nothing left to send
+        XCTAssertEqual(server.allRequests().count, 1)
+
+        config.dsn = "http://key@127.0.0.1:\(server.port)/unavailable"
+        ForgeOpsTracker.captureMetric("payment")
+        ForgeOpsTracker.flushMetrics() // 503: kept
+        ForgeOpsTracker.flushMetrics() // and sent again
+        XCTAssertEqual(server.allRequests().count, 3)
     }
 
     func testCapturesAreANoOpWhenReportingIsNotEnabledForThisEnvironment() {

@@ -28,6 +28,10 @@ public final class PerformanceFlusher {
     private var periodStartedAt = Date()
     private let queue = DispatchQueue(label: "com.forgeops.tracker.performance")
     private var timer: DispatchSourceTimer?
+    private var consecutiveFailures = 0
+
+    /// A batch that has failed this many flushes in a row is dropped rather than carried further.
+    static let maxConsecutiveFailures = 5
 
     /// Not part of the public API: called between the snapshot and the delivery inside `flush`, with
     /// no lock held, so a test can record "concurrently" at exactly the moment the race window is
@@ -60,11 +64,13 @@ public final class PerformanceFlusher {
     }
 
     /// Snapshots the buffered buckets and delivers them as one batch (synchronously: blocks the
-    /// calling thread on the network). A failed delivery keeps every bucket where it is, so the next
-    /// flush's batch just grows instead of losing what was already tallied: there's no other copy of
-    /// this data anywhere.
+    /// calling thread on the network). A delivery that failed for now (a network error, a timeout, a
+    /// 5xx, 408 or 429) keeps every bucket where it is, so the next flush's batch just grows instead
+    /// of losing what was already tallied: there's no other copy of this data anywhere. That is
+    /// bounded: the batch is dropped when the server rejects it (any other 4xx, which no retry can
+    /// fix) or once `maxConsecutiveFailures` flushes in a row have failed, and a log line says so.
     ///
-    /// Only exactly what this snapshot delivered is removed afterward, subtracted from whatever is
+    /// Only exactly what this snapshot delivered (or dropped) is removed afterward, subtracted from whatever is
     /// in each bucket by then, never the whole set cleared outright. `record` can run on another
     /// thread while delivery is in flight (the lock is deliberately released around the network
     /// call), so a record for a transaction already in the snapshot, or a brand-new one, can land in
@@ -102,9 +108,24 @@ public final class PerformanceFlusher {
             ]
         }
 
-        guard client.deliverPerformanceSamples(samples) else { return }
+        let outcome = client.attemptPerformanceSamples(samples)
 
         lock.lock()
+        switch outcome {
+        case .delivered:
+            consecutiveFailures = 0
+        case .rejected:
+            consecutiveFailures = 0
+            NSLog("[forge-ops-tracker] dropped %ld performance samples: %@", samples.count, outcome.reason)
+        case .failed:
+            consecutiveFailures += 1
+            if consecutiveFailures < PerformanceFlusher.maxConsecutiveFailures {
+                lock.unlock()
+                return
+            }
+            consecutiveFailures = 0
+            NSLog("[forge-ops-tracker] dropped %ld performance samples after %ld failed flushes in a row: %@", samples.count, PerformanceFlusher.maxConsecutiveFailures, outcome.reason)
+        }
         for (name, sent) in snapshot {
             guard var current = buckets[name] else { continue }
             current.count = max(0, current.count - sent.count)
@@ -138,6 +159,7 @@ public final class PerformanceFlusher {
         let current = timer
         timer = nil
         buckets.removeAll()
+        consecutiveFailures = 0
         lock.unlock()
         current?.cancel()
     }

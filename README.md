@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.7.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.8.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -175,7 +175,10 @@ yourself** from `applicationDidEnterBackground`/`sceneDidEnterBackground` (on a 
 you'd rather not block the main thread, since it's synchronous) or before a command-line tool quits,
 or the last window is lost.
 
-A failed delivery keeps every tally, so the next flush's window just grows. What a flush delivered
+A delivery that failed for now (a network error, a timeout, a 5xx, 408 or 429) keeps every tally, so
+the next flush's window just grows, for up to five flushes in a row; after the fifth the batch is
+dropped. A batch the server rejects (any other 4xx) is dropped at once, since sending it again could
+never work. Either way a log line says what was dropped and why. What a flush delivered
 is *subtracted* from the tallies afterward, never the whole set cleared: a record from another
 thread that lands while the network call is in flight (the lock is deliberately released around it)
 would otherwise be silently discarded, a real bug `sdks/go` had and fixed and that
@@ -352,11 +355,13 @@ is exact. Both are a no-op when reporting isn't enabled for the environment.
 **Infrastructure readings need a hostname**, and an app has none by default: pass one, or set
 `serverName` in `configure` (it is `nil` by default, and a reading without one is dropped with a log line rather than sent).
 
-A failed delivery keeps every entry for the next flush, and an entry captured while a delivery is in
-flight is kept too (the Ruby gem's own buffer loses it; a test pins this with a hook that captures at
-exactly that moment). Each buffer holds at most 1000 entries and drops further ones until a flush
-succeeds, since a plan without the feature rejects every flush and would otherwise grow it for as long
-as the process lives. A NaN or infinite value is dropped at capture: `JSONSerialization` raises an
+A delivery that failed for now (a network error, a timeout, a 5xx, 408 or 429) keeps every entry for
+the next flush, and an entry captured while a delivery is in flight is kept too (the Ruby gem's own
+buffer loses it; a test pins this with a hook that captures at exactly that moment). A batch the
+server rejects (any other 4xx, such as the 403 of a plan without the feature) is dropped at once, and
+so is one that has failed five flushes in a row, each with a log line. Each buffer holds at most 1000
+entries and drops further ones until a flush succeeds or lets its batch go, since an unreachable
+server would otherwise grow it for as long as the process lives. A NaN or infinite value is dropped at capture: `JSONSerialization` raises an
 Objective-C exception for one, which Swift cannot catch, so it would crash the host app. Requires a
 ForgeOps plan that includes custom metrics / infrastructure monitoring.
 
@@ -403,8 +408,11 @@ An uncaught `NSException`/fatal signal means the process is seconds (or less) fr
 possibly abnormally: there's no time, and no safe way, to make a live network call from inside
 that handler. Instead, `Reporter` writes the event to disk (`CrashStore`, a small durable "queue"
 that survives the process dying, rather than held live in memory) and `installHandlers()` uploads
-whatever's pending from a background queue at the *next* app launch. A failed upload leaves the
-file in place for the launch after that to retry.
+whatever's pending from a background queue at the *next* app launch. An upload that failed for now
+(a network error, a timeout, a 5xx, 408 or 429) leaves the file in place for the launch after that to
+retry. A report the server rejects (any other 4xx) is deleted, since sending it again could never
+work. At most 20 reports wait on disk (the oldest beyond that are deleted) and one older than 7 days
+is deleted, so a report that can't be delivered is not retried for good.
 
 ## Backtrace frames: no file/line, ever
 

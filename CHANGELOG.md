@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0 (2026-10-13)
+
+- A delivery the server will never accept is no longer sent again and again. A response of 4xx
+  (other than 408 and 429) now means the payload is let go: a crash report file is deleted, and a
+  batch of performance samples, metrics or infrastructure readings is dropped. A network error, a
+  timeout, a 5xx, 408 or 429 still keeps the payload for a later try, but not for good: a batch is
+  dropped after five failed flushes in a row, at most 20 crash reports wait on disk (the oldest
+  beyond that are deleted), and a crash report older than 7 days is deleted. Each drop is logged
+  once with `NSLog`, saying what was dropped and why. Before, any failure kept the payload, so a
+  rejected crash report was uploaded at every launch and a rejected batch at every flush. New
+  `CrashStore.maxPendingPayloads` and `CrashStore.maxPendingPayloadAge`. No public API changed:
+  every `Client.deliver*` still returns `true` only for a 2xx.
+
 ## 0.7.1 (2026-10-07)
 
 - The package now ships its MIT licence (`LICENSE.txt`). Earlier versions were published without one. No code changes.

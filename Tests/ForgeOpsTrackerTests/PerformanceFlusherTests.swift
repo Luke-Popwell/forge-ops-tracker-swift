@@ -111,9 +111,10 @@ final class PerformanceFlusherTests: XCTestCase {
     }
 
     func testAFailedDeliveryKeepsEveryBucketSoTheNextFlushCarriesMore() throws {
-        // /unauthorized answers 401 (and does not end in /events, so the URL is left as-is): a
-        // failed delivery. Pointing the DSN at the normal path afterward is the retry that succeeds.
-        let config = configuration(path: "/unauthorized")
+        // /unavailable answers 503 (and does not end in /events, so the URL is left as-is): a
+        // delivery that failed for now. Pointing the DSN at the normal path afterward is the retry
+        // that succeeds.
+        let config = configuration(path: "/unavailable")
         let flusher = makeFlusher(config)
         flusher.record(transactionName: "GET /x", durationMs: 10)
 
@@ -127,6 +128,76 @@ final class PerformanceFlusherTests: XCTestCase {
         let sample = try XCTUnwrap((lastRequestJSON()["samples"] as? [[String: Any]])?.first)
         XCTAssertEqual(sample["request_count"] as? Int, 2)
         XCTAssertNil(flusher.tally(for: "GET /x"))
+    }
+
+    func testARejectedDeliveryDropsTheBatchAndNeverSendsItAgain() throws {
+        // /unauthorized answers 401: the server will never take this batch.
+        let config = configuration(path: "/unauthorized")
+        let flusher = makeFlusher(config)
+        flusher.record(transactionName: "GET /x", durationMs: 10)
+
+        flusher.flush()
+        XCTAssertNil(flusher.tally(for: "GET /x"))
+
+        flusher.flush() // nothing left: no second request
+        XCTAssertEqual(server.allRequests().count, 1)
+
+        config.dsn = "http://key@127.0.0.1:\(server.port)/api/v1/events"
+        flusher.record(transactionName: "GET /y", durationMs: 20)
+        flusher.flush()
+
+        let samples = try XCTUnwrap(lastRequestJSON()["samples"] as? [[String: Any]])
+        XCTAssertEqual(samples.compactMap { $0["transaction_name"] as? String }, ["GET /y"])
+    }
+
+    func testAnUnreachableServerKeepsEveryBucket() {
+        let config = configuration()
+        config.dsn = "http://key@127.0.0.1:1/api/v1/events" // nothing listens there
+        config.timeout = 0.5
+        let flusher = makeFlusher(config)
+        flusher.record(transactionName: "GET /x", durationMs: 10)
+
+        flusher.flush()
+
+        XCTAssertEqual(flusher.tally(for: "GET /x")?.count, 1)
+    }
+
+    func testTheFifthFailedFlushInARowDropsTheBatch() {
+        let config = configuration(path: "/unavailable")
+        let flusher = makeFlusher(config)
+        flusher.record(transactionName: "GET /x", durationMs: 10)
+
+        for _ in 0 ..< 4 {
+            flusher.flush()
+        }
+        XCTAssertEqual(flusher.tally(for: "GET /x")?.count, 1)
+
+        flusher.flush()
+        XCTAssertNil(flusher.tally(for: "GET /x"))
+        XCTAssertEqual(server.allRequests().count, 5)
+
+        flusher.flush() // nothing left: no sixth request
+        XCTAssertEqual(server.allRequests().count, 5)
+    }
+
+    func testASuccessfulFlushStartsTheFailureCountAgain() {
+        let config = configuration(path: "/unavailable")
+        let flusher = makeFlusher(config)
+        flusher.record(transactionName: "GET /x", durationMs: 10)
+        for _ in 0 ..< 4 {
+            flusher.flush()
+        }
+
+        config.dsn = "http://key@127.0.0.1:\(server.port)/api/v1/events"
+        flusher.flush()
+        XCTAssertNil(flusher.tally(for: "GET /x"))
+
+        config.dsn = "http://key@127.0.0.1:\(server.port)/unavailable"
+        flusher.record(transactionName: "GET /y", durationMs: 10)
+        for _ in 0 ..< 4 {
+            flusher.flush()
+        }
+        XCTAssertEqual(flusher.tally(for: "GET /y")?.count, 1)
     }
 
     func testARecordThatLandsDuringDeliveryIsNeverLost() {
@@ -167,7 +238,7 @@ final class PerformanceFlusherTests: XCTestCase {
     }
 
     func testKeepsHistogramCountsForTheNextFlushWhenDeliveryFails() throws {
-        let config = configuration(path: "/unauthorized") // answers 401: a failed delivery
+        let config = configuration(path: "/unavailable") // answers 503: a delivery that failed for now
         let flusher = makeFlusher(config)
         flusher.record(transactionName: "GET /posts", durationMs: 10)
         flusher.flush()

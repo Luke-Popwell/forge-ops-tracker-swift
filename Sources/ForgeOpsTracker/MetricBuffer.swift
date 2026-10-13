@@ -9,16 +9,19 @@ import Foundation
 /// same class twice; here it is one class instantiated twice, told which delivery function and flush
 /// interval to use.
 ///
-/// Three deliberate differences from the Ruby buffers:
+/// Four deliberate differences from the Ruby buffers:
 ///
 /// - A flush snapshots the first N entries and, on success, removes exactly those N, instead of
 ///   resetting the whole list, so an entry recorded while the request is in flight (the lock is
 ///   released around the network call) is kept for the next flush rather than lost.
 /// - The buffer is capped at `maxEntries`, and once full further entries are dropped until a flush
-///   succeeds: a plan without the feature answers 403 on every flush, and an uncapped buffer would
-///   then grow for as long as the process lives. Dropping the newest rather than the oldest keeps the
-///   entries a flush is delivering at the front of the array, which is what makes removing exactly
-///   them afterward exact.
+///   succeeds or lets its batch go: an unreachable server fails every flush, and an uncapped buffer
+///   would then grow for as long as the process lives. Dropping the newest rather than the oldest
+///   keeps the entries a flush is delivering at the front of the array, which is what makes removing
+///   exactly them afterward exact.
+/// - A batch is not retried without end. One the server rejects (a 4xx other than 408 and 429, such
+///   as the 403 a plan without the feature answers) is dropped at once, and one that has failed
+///   `maxConsecutiveFailures` flushes in a row is dropped too, each with a log line.
 /// - A NaN or infinite value is dropped at record time: `JSONSerialization` raises an Objective-C
 ///   exception for one, which Swift cannot catch, so it would crash the host app.
 ///
@@ -29,22 +32,32 @@ import Foundation
 public final class MetricBuffer {
     public static let maxEntries = 1000
 
+    /// A batch that has failed this many flushes in a row is dropped rather than carried further.
+    static let maxConsecutiveFailures = 5
+
     private let configuration: Configuration
-    private let deliver: ([[String: Any]]) -> Bool
+    private let deliver: ([[String: Any]]) -> DeliveryOutcome
     private let interval: () -> TimeInterval
     private let lock = NSLock()
     private var entries: [[String: Any]] = []
     private let queue = DispatchQueue(label: "com.forgeops.tracker.metrics")
     private var timer: DispatchSourceTimer?
+    private var consecutiveFailures = 0
 
     /// Not part of the public API: called between the snapshot and the delivery inside `flush`, with no
     /// lock held, so a test can record "concurrently" at exactly the moment the race window is open.
     var beforeDeliveryHook: (() -> Void)?
 
     /// `deliver` takes a batch and returns whether delivery succeeded; `interval` is read on every arm of the timer.
-    public init(configuration: Configuration, deliver: @escaping ([[String: Any]]) -> Bool, interval: @escaping () -> TimeInterval) {
+    /// A `false` is a failure that may work later: the batch is kept, up to `maxConsecutiveFailures` flushes.
+    public convenience init(configuration: Configuration, deliver: @escaping ([[String: Any]]) -> Bool, interval: @escaping () -> TimeInterval) {
+        self.init(configuration: configuration, attempt: { deliver($0) ? .delivered : .failed(status: 0) }, interval: interval)
+    }
+
+    /// Not part of the public API: the same, for a `deliver` that can tell a rejected batch from a failed one.
+    init(configuration: Configuration, attempt: @escaping ([[String: Any]]) -> DeliveryOutcome, interval: @escaping () -> TimeInterval) {
         self.configuration = configuration
-        self.deliver = deliver
+        deliver = attempt
         self.interval = interval
     }
 
@@ -72,7 +85,8 @@ public final class MetricBuffer {
     }
 
     /// Delivers everything buffered so far as one batch (synchronously: blocks the calling thread on the
-    /// network). A failed delivery keeps every entry, so the next flush's batch just grows.
+    /// network). A delivery that failed for now keeps every entry, so the next flush's batch just grows;
+    /// a rejected batch, or one that has failed `maxConsecutiveFailures` flushes in a row, is dropped.
     public func flush() {
         lock.lock()
         if entries.isEmpty {
@@ -85,10 +99,25 @@ public final class MetricBuffer {
 
         hook?()
 
-        guard deliver(snapshot) else { return }
+        let outcome = deliver(snapshot)
 
         lock.lock()
-        // Exactly the entries just delivered: anything recorded while the request was in flight sits
+        switch outcome {
+        case .delivered:
+            consecutiveFailures = 0
+        case .rejected:
+            consecutiveFailures = 0
+            NSLog("[forge-ops-tracker] dropped %ld metrics: %@", snapshot.count, outcome.reason)
+        case .failed:
+            consecutiveFailures += 1
+            if consecutiveFailures < MetricBuffer.maxConsecutiveFailures {
+                lock.unlock()
+                return
+            }
+            consecutiveFailures = 0
+            NSLog("[forge-ops-tracker] dropped %ld metrics after %ld failed flushes in a row: %@", snapshot.count, MetricBuffer.maxConsecutiveFailures, outcome.reason)
+        }
+        // Exactly the entries just delivered or dropped: anything recorded while the request was in flight sits
         // after them and stays for the next flush.
         entries.removeFirst(min(snapshot.count, entries.count))
         lock.unlock()
@@ -100,6 +129,7 @@ public final class MetricBuffer {
         let current = timer
         timer = nil
         entries.removeAll()
+        consecutiveFailures = 0
         lock.unlock()
         current?.cancel()
     }

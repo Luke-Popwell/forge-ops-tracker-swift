@@ -49,6 +49,50 @@ final class CrashStoreTests: XCTestCase {
         XCTAssertTrue(store.pendingPayloadURLs().isEmpty)
     }
 
+    private func backdate(_ url: URL, by interval: TimeInterval) throws {
+        let date = Date().addingTimeInterval(-interval)
+        try FileManager.default.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: url.path)
+    }
+
+    func testPendingPayloadURLsKeepsOnlyTheNewestTwentyAndDeletesTheRest() throws {
+        for i in 0 ..< CrashStore.maxPendingPayloads + 3 {
+            XCTAssertTrue(store.write(payload: ["n": i]))
+        }
+        // Spread the creation times out by hand: oldest first, an hour apart.
+        let written = try FileManager.default.contentsOfDirectory(atPath: config.crashReportsDirectory)
+        var byNumber: [Int: URL] = [:]
+        for name in written {
+            let url = URL(fileURLWithPath: config.crashReportsDirectory).appendingPathComponent(name)
+            let n = try XCTUnwrap(store.payload(at: url)?["n"] as? Int)
+            byNumber[n] = url
+            try backdate(url, by: TimeInterval((written.count - n) * 3600))
+        }
+
+        let urls = store.pendingPayloadURLs()
+
+        XCTAssertEqual(urls.count, CrashStore.maxPendingPayloads)
+        XCTAssertEqual(urls.compactMap { store.payload(at: $0)?["n"] as? Int }, Array(3 ..< CrashStore.maxPendingPayloads + 3))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: config.crashReportsDirectory).count, CrashStore.maxPendingPayloads)
+        for n in 0 ..< 3 {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(byNumber[n]).path))
+        }
+    }
+
+    func testPendingPayloadURLsDeletesAnythingOlderThanSevenDays() throws {
+        XCTAssertTrue(store.write(payload: ["n": "old"]))
+        let old = store.pendingPayloadURLs()[0]
+        try backdate(old, by: CrashStore.maxPendingPayloadAge + 3600)
+        XCTAssertTrue(store.write(payload: ["n": "almost"]))
+        let almost = try XCTUnwrap(store.pendingPayloadURLs().first { $0 != old })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        try backdate(almost, by: CrashStore.maxPendingPayloadAge - 3600)
+        XCTAssertTrue(store.write(payload: ["n": "new"]))
+
+        let urls = store.pendingPayloadURLs()
+
+        XCTAssertEqual(urls.compactMap { store.payload(at: $0)?["n"] as? String }, ["almost", "new"])
+    }
+
     func testPendingPayloadURLsIsEmptyWhenDirectoryDoesNotExist() {
         XCTAssertTrue(store.pendingPayloadURLs().isEmpty)
     }

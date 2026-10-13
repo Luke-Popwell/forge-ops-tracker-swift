@@ -9,6 +9,11 @@ import Foundation
 /// near-simultaneously) never collide. Ported from this repo's own Objective-C client
 /// (`sdks/objc/Sources/ForgeOpsTracker/FOTCrashStore.h`).
 public final class CrashStore {
+    /// The most pending reports kept on disk, and the longest one is kept: a report that keeps
+    /// failing to upload (see `Reporter.uploadPendingReports`) must not pile up or be retried for good.
+    public static let maxPendingPayloads = 20
+    public static let maxPendingPayloadAge: TimeInterval = 7 * 24 * 60 * 60
+
     private let configuration: Configuration
 
     public init(configuration: Configuration) {
@@ -31,7 +36,8 @@ public final class CrashStore {
         }
     }
 
-    /// The file URL of every pending payload currently on disk, oldest first.
+    /// The file URL of every pending payload currently on disk, oldest first. Anything older than
+    /// `maxPendingPayloadAge`, and the oldest beyond `maxPendingPayloads`, is deleted here first.
     public func pendingPayloadURLs() -> [URL] {
         let dir = URL(fileURLWithPath: configuration.crashReportsDirectory, isDirectory: true)
         guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey]) else {
@@ -43,12 +49,42 @@ public final class CrashStore {
         // handler (see SignalHandler.swift's own comment for why that path can't safely build
         // JSON inline). Reporter.uploadPendingReports branches on which one it's looking at.
         let reportFiles = urls.filter { $0.pathExtension == "json" || $0.pathExtension == "txt" }
-        return reportFiles.sorted { a, b in
+        let sorted = reportFiles.sorted { a, b in
             let dateA = (try? a.resourceValues(forKeys: [.creationDateKey]))?.creationDate
             let dateB = (try? b.resourceValues(forKeys: [.creationDateKey]))?.creationDate
             guard let dateA, let dateB else { return false }
             return dateA < dateB
         }
+        return prune(sorted)
+    }
+
+    // A file whose creation date can't be read is never counted as too old, only toward the cap.
+    private func prune(_ sorted: [URL]) -> [URL] {
+        let cutoff = Date().addingTimeInterval(-CrashStore.maxPendingPayloadAge)
+        var kept: [URL] = []
+        var expired = 0
+        for url in sorted {
+            if let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate, created < cutoff {
+                deletePayload(at: url)
+                expired += 1
+            } else {
+                kept.append(url)
+            }
+        }
+
+        let excess = max(0, kept.count - CrashStore.maxPendingPayloads)
+        for url in kept.prefix(excess) {
+            deletePayload(at: url)
+        }
+        kept.removeFirst(excess)
+
+        if expired > 0 {
+            NSLog("[forge-ops-tracker] dropped %ld crash reports older than 7 days that could not be delivered", expired)
+        }
+        if excess > 0 {
+            NSLog("[forge-ops-tracker] dropped the %ld oldest crash reports: more than %ld were waiting to be delivered", excess, CrashStore.maxPendingPayloads)
+        }
+        return kept
     }
 
     public func payload(at url: URL) -> [String: Any]? {
