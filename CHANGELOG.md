@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0 (2026-10-20)
+
+- Strict privacy, for apps that can't let personal or health data leave the device: new
+  `Configuration.strictPrivacy` (off by default) and `Configuration.privacyAllowedFields`. With it
+  on, an error is sent without its message (a `message_fingerprint` computed on the device keeps
+  grouping working), without breadcrumbs (none are recorded), without the SQL statement, with the
+  user's id only, and with only the allowed context keys; a trace's spans are named by method and
+  host only, ids are stripped from span and performance transaction names that are raw paths
+  (`GET /users/42` becomes `GET /users/:id`), and span data keeps only `db.statement` and
+  `db.system`. Off, nothing changes. See "Strict privacy" in the README.
+
 ## 0.8.0 (2026-10-13)
 
 - A delivery the server will never accept is no longer sent again and again. A response of 4xx

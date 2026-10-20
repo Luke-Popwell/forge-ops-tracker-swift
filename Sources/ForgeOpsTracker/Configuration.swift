@@ -88,6 +88,20 @@ public final class Configuration {
     public var metricFlushInterval: TimeInterval = 60
     public var infrastructureMetricFlushInterval: TimeInterval = 60
 
+    /// Strict privacy, for apps that can't let personal or health data leave the device: off by
+    /// default. With it on, an error is sent without its message (a `message_fingerprint`, a one-way
+    /// hash of it with numbers and ids taken out, keeps grouping working), without breadcrumbs (none
+    /// are recorded), without the SQL statement, and with the user's id only; context and tags keep
+    /// only the keys in `privacyAllowedFields`, and a span keeps only its method and host, never a
+    /// URL path, plus its `db.statement` and `db.system`. See `StrictPrivacy` and
+    /// `sdks/STRICT_PRIVACY.md`. ForgeOps applies the same rules again on arrival when the
+    /// project's own Strict privacy setting is on.
+    public var strictPrivacy: Bool = false
+
+    /// Under strict privacy, the context and tag keys still sent (your own error codes, say), and
+    /// only when the value is a string, number or boolean. Empty by default: nothing is sent.
+    public var privacyAllowedFields: [String] = []
+
     /// Where pending (not-yet-uploaded) crash reports are written: see CrashStore.
     public var crashReportsDirectory: String
 

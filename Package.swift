@@ -18,6 +18,12 @@ let package = Package(
         // Swift. Lives under Tests/ via an explicit path so it's never part of the shipped
         // library.
         .target(name: "CFOTTestSupport", path: "Tests/CFOTTestSupport"),
-        .testTarget(name: "ForgeOpsTrackerTests", dependencies: ["ForgeOpsTracker", "CFOTTestSupport"]),
+        // The strict privacy vectors are a byte-identical copy of sdks/strict_privacy_vectors.json,
+        // the expected results every SDK in this repo checks itself against.
+        .testTarget(
+            name: "ForgeOpsTrackerTests",
+            dependencies: ["ForgeOpsTracker", "CFOTTestSupport"],
+            resources: [.copy("Fixtures/strict_privacy_vectors.json")]
+        ),
     ]
 )

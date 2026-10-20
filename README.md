@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.8.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.9.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -470,6 +470,45 @@ ForgeOpsTracker.configure { config in
     config.scrubPII = false
 }
 ```
+
+## Strict privacy
+
+For apps that can't let personal or health data (PII, PHI) leave the device. With strict privacy on,
+this SDK sends only structured facts about an error (its type, its backtrace frames, release,
+environment, server name, trace id, timings and counts), never free text that could hold a name, an
+email or a diagnosis. Off by default.
+
+```swift
+ForgeOpsTracker.configure { config in
+    config.strictPrivacy = true
+    config.privacyAllowedFields = ["error_code", "feature"]
+}
+```
+
+With it on:
+
+- An error's message is not sent. A `message_fingerprint` is sent instead: a one-way hash of the
+  message (after PII scrubbing) with its numbers, hex ids and UUIDs taken out, computed on the
+  device, so errors still group together and nothing about the text can be read back from it. A
+  raw signal crash report is reduced the same way before it's uploaded.
+- `context` and tags keep only the top-level keys listed in `privacyAllowedFields`, and only when
+  the value is a string, number or boolean. With no allowed fields (the default), none are sent.
+- The user is sent as its `id` only, as a string, never `email` or `username`; no id, no user.
+- Breadcrumbs are not recorded at all, so none are sent.
+- The SQL statement is never sent, even with `captureSqlStatement` on. The table and view names
+  (`captureSqlObjects`) still are.
+- A trace's span names keep an outgoing call's method and host only (`GET api.example.com`, never
+  a path or a query), a name that's a raw path (`GET /patients/42`, `/patients/42`) has its ids
+  stripped (`GET /patients/:id`), and span data keeps only `db.statement` (already masked) and
+  `db.system`. A name like `OrdersController#create` or `load home screen` is kept.
+- A transaction name given to `recordPerformance`/`measureTransaction` goes through the same rule,
+  so `GET /users/42` is recorded and sent as `GET /users/:id`; a route or any other name is kept.
+
+Metrics and changes are unchanged: they're already names, counts and timings.
+
+ForgeOps applies the same rules again on arrival when the project's own Strict privacy setting is
+on, so an app on an older SDK, or one that left this option off, still can't get text stored for
+that project. This option is what keeps the text from ever leaving the device in the first place.
 
 ## An unguarded gap: an internal Foundation API raising NSException
 

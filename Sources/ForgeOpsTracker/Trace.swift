@@ -180,8 +180,16 @@ public final class Trace {
         lock.unlock()
     }
 
+    // Under strict privacy every span, the root included, goes through StrictPrivacy.span: an
+    // outbound call's name keeps its method and host only, and its data only db.statement and
+    // db.system.
     private func span(id: String, parent: String?, name: String, kind: String, startedAt: Date, durationMs: Double, data: [String: Any]?) -> [String: Any] {
-        [
+        var name = name
+        var data = data
+        if configuration.strictPrivacy {
+            (name, data) = StrictPrivacy.span(name: name, data: data)
+        }
+        return [
             "span_id": id,
             "parent_span_id": parent as Any? ?? NSNull(),
             "name": name,

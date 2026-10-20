@@ -36,10 +36,11 @@ public final class BreadcrumbBuffer {
         configuration.crashReportsDirectory + ".breadcrumbs.json"
     }
 
-    /// Does nothing when `Configuration.trackBreadcrumbs` is false. Drops the oldest entries past
+    /// Does nothing when `Configuration.trackBreadcrumbs` is false, or under strict privacy (a
+    /// breadcrumb is free text, and is never sent then). Drops the oldest entries past
     /// `Configuration.maxBreadcrumbs`.
     public func add(message: String, category: String, level: String, data: [String: Any]) {
-        guard configuration.trackBreadcrumbs else { return }
+        guard configuration.trackBreadcrumbs, !configuration.strictPrivacy else { return }
 
         let entry: [String: Any] = [
             "category": category,

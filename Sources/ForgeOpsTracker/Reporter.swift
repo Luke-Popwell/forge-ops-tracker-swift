@@ -54,7 +54,7 @@ public final class Reporter {
         guard configuration.isEnabled else { return }
 
         for url in crashStore.pendingPayloadURLs() {
-            let payload: [String: Any]?
+            var payload: [String: Any]?
             if url.pathExtension == "txt" {
                 // A raw signal-crash report: fill in the standard fields the C signal handler
                 // couldn't safely build inline (see SignalHandler.swift), now that it's safe to
@@ -64,6 +64,11 @@ public final class Reporter {
                 payload = crashStore.payload(at: url)
             }
 
+            // Applied again at upload, not only at capture: a raw signal report is only completed
+            // here, and a report written before strict privacy was turned on must not go out as it was.
+            if configuration.strictPrivacy, let raw = payload {
+                payload = StrictPrivacy.event(raw, allowedFields: configuration.privacyAllowedFields)
+            }
             guard let payload else {
                 // Unreadable/corrupt file: delete rather than retry forever.
                 crashStore.deletePayload(at: url)
