@@ -102,19 +102,20 @@ final class PerformanceFlusherTests: XCTestCase {
         XCTAssertNil(flusher.tally(for: "GET /users/:id"))
     }
 
-    func testUnderStrictPrivacyARawPathTransactionNameIsSentWithItsIdsStripped() throws {
+    func testUnderStrictPrivacyARawPathTransactionNameIsSentAsItsFirstSegmentAndARouteIsKept() throws {
         let config = configuration()
         config.strictPrivacy = true
         let flusher = makeFlusher(config)
         flusher.record(transactionName: "GET /patients/42", durationMs: 10)
         flusher.record(transactionName: "GET /patients/43", durationMs: 20)
         flusher.record(transactionName: "load-user", durationMs: 5)
+        flusher.record(transactionName: "GET /visits/:id", durationMs: 5)
 
         flusher.flush()
 
         let samples = try XCTUnwrap(lastRequestJSON()["samples"] as? [[String: Any]])
-        XCTAssertEqual(Set(samples.compactMap { $0["transaction_name"] as? String }), ["GET /patients/:id", "load-user"])
-        let stripped = try XCTUnwrap(samples.first { $0["transaction_name"] as? String == "GET /patients/:id" })
+        XCTAssertEqual(Set(samples.compactMap { $0["transaction_name"] as? String }), ["GET /patients/:path", "load-user", "GET /visits/:id"])
+        let stripped = try XCTUnwrap(samples.first { $0["transaction_name"] as? String == "GET /patients/:path" })
         XCTAssertEqual(stripped["request_count"] as? Int, 2)
     }
 

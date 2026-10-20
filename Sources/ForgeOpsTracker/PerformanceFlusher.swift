@@ -46,8 +46,9 @@ public final class PerformanceFlusher {
     /// Does nothing (and starts no timer) when `trackPerformance` is false or reporting isn't
     /// enabled for this environment.
     ///
-    /// Under strict privacy a name that's a raw path ("GET /users/42") is bucketed with its ids
-    /// stripped ("GET /users/:id"), so it's never held or sent as it was: see `StrictPrivacy`.
+    /// Under strict privacy a name that's a raw path ("GET /users/42/notes") is bucketed as its
+    /// first segment ("GET /users/:path"), so it's never held or sent as it was; a route template
+    /// ("GET /users/:id") is kept. See `StrictPrivacy`.
     public func record(transactionName: String, durationMs: Double) {
         guard configuration.trackPerformance, configuration.isEnabled else { return }
         let transactionName = configuration.strictPrivacy ? StrictPrivacy.transactionName(transactionName) : transactionName

@@ -100,20 +100,20 @@ enum StrictPrivacy {
     }
 
     /// "GET https://api.example.com/patients/42?x=1" or "GET api.example.com/patients/42" becomes
-    /// "GET api.example.com"; "GET /patients/42" becomes "GET /patients/:id", and "/patients/42"
-    /// becomes "/patients/:id". Any other name ("OrdersController#create") is kept as it is. Read by
+    /// "GET api.example.com"; a path goes through `strictPath`, alone or after a method:
+    /// "GET /patients/42/notes" becomes "GET /patients/:path", "/patients/:id" stays. Any other name ("OrdersController#create") is kept as it is. Read by
     /// hand, never with a URL parser: one that rejects an address must not mean the whole address
     /// is sent.
     static func spanName(_ name: String) -> String {
-        if name.hasPrefix("/") { return pathWithoutIds(name) }
+        if name.hasPrefix("/") { return strictPath(name) }
         guard let match = httpMethod.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
               let methodRange = Range(match.range(at: 1), in: name),
               let targetRange = Range(match.range(at: 2), in: name) else { return name }
 
         let method = name[methodRange].uppercased()
         let target = String(name[targetRange])
-        if target.hasPrefix("/") { return "\(method) \(pathWithoutIds(target))" }
-        return "\(method) \(hostOf(target) ?? pathWithoutIds(target))"
+        if target.hasPrefix("/") { return "\(method) \(strictPath(target))" }
+        return "\(method) \(hostOf(target) ?? strictPath(target))"
     }
 
     /// The host of an outbound call's address: whatever comes before the first "/", "?" or "#",
@@ -135,27 +135,38 @@ enum StrictPrivacy {
     }
 
     /// Which request something happened in: a route or a name like "load-user" is kept, but a raw
-    /// path has its ids stripped, by the same rule as a span's name. An empty name is kept.
+    /// path keeps only its first segment, by the same rule as a span's name. An empty name is kept.
     static func transactionName(_ name: String) -> String {
         name.isEmpty ? name : spanName(name)
     }
 
-    /// A path with every segment that holds an ASCII digit, or is long enough to be a token or a
-    /// name slug, replaced by ":id"; no query or fragment. "/patients/42/notes?q=x" is
-    /// "/patients/:id/notes". Trailing empty segments are dropped, as Ruby's `split` does, so the
-    /// result matches the server's: "/a/" is "/a".
-    static func pathWithoutIds(_ path: String) -> String {
+    /// A request or page path as strict privacy sends it, with no query or fragment. A route
+    /// template (any segment that starts with ":" or "*", or is wrapped in {}, <> or []) is kept as
+    /// it is: "/patients/:id/notes" stays. A raw path keeps only its first segment (":id" when that
+    /// holds an ASCII digit or is longer than 40 characters), then "/:path" if there was more:
+    /// "/patients/jane-doe/12" is "/patients/:path", "/42/edit" is "/:id/:path". No segments is "/".
+    static func strictPath(_ path: String) -> String {
         let cut = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         let bare = cut.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
-        var segments = bare.components(separatedBy: "/")
-        while let last = segments.last, last.isEmpty {
-            segments.removeLast()
-        }
-        let joined = segments.map { segment -> String in
-            let hasDigit = segment.unicodeScalars.contains { ("0" ... "9").contains($0) }
-            return hasDigit || segment.unicodeScalars.count > 40 ? ":id" : segment
-        }.joined(separator: "/")
-        return joined.isEmpty ? "/" : joined
+        let all = bare.components(separatedBy: "/")
+        if all.contains(where: isRouteParameter) { return bare }
+
+        let segments = all.filter { !$0.isEmpty }
+        guard let first = segments.first else { return "/" }
+        let hasDigit = first.unicodeScalars.contains { ("0" ... "9").contains($0) }
+        let head = hasDigit || first.unicodeScalars.count > 40 ? ":id" : first
+        return (bare.hasPrefix("/") ? "/" : "") + head + (segments.count > 1 ? "/:path" : "")
+    }
+
+    /// ":id", "{id}", "<int:id>", "[slug]" or "*path": a parameter with a name (anything after
+    /// "*"), and no newline in it, the same as the server's ".".
+    private static func isRouteParameter(_ segment: String) -> Bool {
+        let scalars = Array(segment.unicodeScalars)
+        guard !scalars.contains("\n"), let first = scalars.first else { return false }
+        if first == "*" { return true }
+        if first == ":" { return scalars.count >= 2 }
+        guard scalars.count >= 3, let last = scalars.last else { return false }
+        return (first == "{" && last == "}") || (first == "<" && last == ">") || (first == "[" && last == "]")
     }
 
     /// Only the allowed top-level keys, and only plain values (a string, number or boolean, which

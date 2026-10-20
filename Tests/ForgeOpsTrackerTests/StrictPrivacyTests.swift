@@ -39,12 +39,12 @@ final class StrictPrivacyTests: XCTestCase {
         }
     }
 
-    func testEveryPathVectorHasItsIdsStripped() throws {
+    func testEveryPathVectorKeepsARouteTemplateAndOnlyARawPathsFirstSegment() throws {
         let entries = try XCTUnwrap(vectors()["path"])
         XCTAssertFalse(entries.isEmpty)
         for entry in entries {
             let path = try XCTUnwrap(entry["path"])
-            XCTAssertEqual(StrictPrivacy.pathWithoutIds(path), entry["strict"], "path: \(path)")
+            XCTAssertEqual(StrictPrivacy.strictPath(path), entry["strict"], "path: \(path)")
         }
     }
 
@@ -57,12 +57,12 @@ final class StrictPrivacyTests: XCTestCase {
         }
     }
 
-    func testATransactionNameKeepsARouteAndStripsIdsFromARawPath() {
+    func testATransactionNameKeepsARouteAndOnlyARawPathsFirstSegment() {
         XCTAssertEqual(StrictPrivacy.transactionName("OrdersController#create"), "OrdersController#create")
         XCTAssertEqual(StrictPrivacy.transactionName("load-user"), "load-user")
         XCTAssertEqual(StrictPrivacy.transactionName("GET /users/:id"), "GET /users/:id")
-        XCTAssertEqual(StrictPrivacy.transactionName("GET /users/42"), "GET /users/:id")
-        XCTAssertEqual(StrictPrivacy.transactionName("/users/42"), "/users/:id")
+        XCTAssertEqual(StrictPrivacy.transactionName("GET /users/42"), "GET /users/:path")
+        XCTAssertEqual(StrictPrivacy.transactionName("/users/42"), "/users/:path")
         XCTAssertEqual(StrictPrivacy.transactionName(""), "")
     }
 
@@ -78,10 +78,14 @@ final class StrictPrivacyTests: XCTestCase {
         XCTAssertEqual(StrictPrivacy.messageFingerprint(nil), "e3b0c44298fc1c149afbf4c8996fb924")
     }
 
-    func testPathsDropTrailingEmptySegmentsTheWayTheServerDoes() {
-        XCTAssertEqual(StrictPrivacy.pathWithoutIds("/a/"), "/a")
-        XCTAssertEqual(StrictPrivacy.pathWithoutIds("?q=jane"), "/")
-        XCTAssertEqual(StrictPrivacy.pathWithoutIds("/orders/7/items/"), "/orders/:id/items")
+    func testPathsReadRouteParametersTheWayTheServerDoes() {
+        XCTAssertEqual(StrictPrivacy.strictPath("/a/"), "/a")
+        XCTAssertEqual(StrictPrivacy.strictPath("?q=jane"), "/")
+        XCTAssertEqual(StrictPrivacy.strictPath("/orders/7/items/"), "/orders/:path")
+        XCTAssertEqual(StrictPrivacy.strictPath("*"), "*")
+        XCTAssertEqual(StrictPrivacy.strictPath("/a/:"), "/a/:path") // a parameter needs a name
+        XCTAssertEqual(StrictPrivacy.strictPath("/a/{}"), "/a/:path")
+        XCTAssertEqual(StrictPrivacy.strictPath("/a/:x\ny"), "/a/:path") // the server's "." never matches a newline
     }
 
     // MARK: configuration
@@ -260,7 +264,7 @@ final class StrictPrivacyTests: XCTestCase {
         }
 
         let root = try XCTUnwrap(span("controller", in: spans))
-        XCTAssertEqual(root["name"] as? String, "GET /patients/:id/notes")
+        XCTAssertEqual(root["name"] as? String, "GET /patients/:path")
 
         let http = try XCTUnwrap(span("http", in: spans))
         XCTAssertEqual(http["name"] as? String, "POST api.example.com")

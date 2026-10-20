@@ -15,7 +15,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.9.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.10.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
@@ -498,11 +498,14 @@ With it on:
 - The SQL statement is never sent, even with `captureSqlStatement` on. The table and view names
   (`captureSqlObjects`) still are.
 - A trace's span names keep an outgoing call's method and host only (`GET api.example.com`, never
-  a path or a query), a name that's a raw path (`GET /patients/42`, `/patients/42`) has its ids
-  stripped (`GET /patients/:id`), and span data keeps only `db.statement` (already masked) and
+  a path or a query), a name that's a route template is kept as it is (any segment like `:id`,
+  `{id}`, `<int:id>`, `[slug]` or `*path`: `GET /patients/:id/notes` stays), a raw path keeps only
+  its first segment (`GET /patients/jane-doe/12` and `/patients/42` become `GET /patients/:path` and
+  `/patients/:path`), and span data keeps only `db.statement` (already masked) and
   `db.system`. A name like `OrdersController#create` or `load home screen` is kept.
 - A transaction name given to `recordPerformance`/`measureTransaction` goes through the same rule,
-  so `GET /users/42` is recorded and sent as `GET /users/:id`; a route or any other name is kept.
+  so `GET /users/42` is recorded and sent as `GET /users/:path`; a route template
+  (`GET /users/:id`) or any other name is kept.
 
 Metrics and changes are unchanged: they're already names, counts and timings.
 
