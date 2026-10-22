@@ -90,7 +90,7 @@ public final class Configuration {
 
     /// Strict privacy, for apps that can't let personal or health data leave the device: off by
     /// default. With it on, an error is sent without its message (a `message_fingerprint`, a one-way
-    /// hash of it with numbers and ids taken out, keeps grouping working), without breadcrumbs (none
+    /// hash of it with numbers, ids, emails and quoted values taken out, keeps grouping working), without breadcrumbs (none
     /// are recorded), without the SQL statement, and with the user's id only; context and tags keep
     /// only the keys in `privacyAllowedFields`, and a span keeps only its method and host, never a
     /// URL path, plus its `db.statement` and `db.system`. See `StrictPrivacy` and

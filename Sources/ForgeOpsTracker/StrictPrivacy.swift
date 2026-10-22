@@ -13,7 +13,7 @@ import Foundation
 /// every SDK must produce (a copy lives in this package's test fixtures).
 ///
 /// Grouping keeps working without the message: `message_fingerprint` is a one-way hash of the
-/// message with its numbers and ids taken out, so two messages that differ only in ids hash the same.
+/// message with its numbers, ids, emails and quoted values taken out, so two messages that differ only in ids hash the same.
 enum StrictPrivacy {
     static let fingerprintLength = 32
 
@@ -21,6 +21,11 @@ enum StrictPrivacy {
     // a word includes letters and digits from every script, and the server's doesn't, so "٣" (an
     // Arabic-Indic digit) or "é" next to a number must not stop it being replaced.
     private static let word = "A-Za-z0-9_"
+    private static let email = regex(#"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"#)
+    // A quoted value (KeyError: 'Jane Doe') is data, not the shape of the error. A single quote only
+    // opens or closes one where no ASCII word character touches it, so "Couldn't" never does.
+    private static let doubleQuoted = regex(#""[^"\r\n]*""#)
+    private static let singleQuoted = regex("(?<![\(word)])'[^'\\r\\n]*'(?![\(word)])")
     private static let hexObjectId = regex("0x[0-9a-fA-F]{4,}")
     private static let uuid = regex("(?<![\(word)])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\(word)])")
     private static let number = regex("(?<![\(word)])[0-9]+(?![\(word)])")
@@ -44,9 +49,13 @@ enum StrictPrivacy {
         regex.stringByReplacingMatches(in: string, range: NSRange(string.startIndex..., in: string), withTemplate: template)
     }
 
-    /// The message with hex object ids, UUIDs and standalone numbers replaced, in that order.
+    /// The message with emails, quoted values, hex object ids, UUIDs and standalone numbers replaced,
+    /// in that order.
     static func normalizeMessage(_ message: String?) -> String {
         var result = message ?? ""
+        result = replace(email, in: result, with: "<email>")
+        result = replace(doubleQuoted, in: result, with: "<str>")
+        result = replace(singleQuoted, in: result, with: "<str>")
         result = replace(hexObjectId, in: result, with: "0x")
         result = replace(uuid, in: result, with: "<uuid>")
         result = replace(number, in: result, with: "<n>")
