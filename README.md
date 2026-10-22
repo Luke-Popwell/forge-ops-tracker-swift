@@ -8,6 +8,8 @@ otherwise crash the app, and uploads it on the next app launch rather than live.
 happens on the *next* launch, not live during the crash" below for why that's a deliberate design
 choice, not a limitation to work around.
 
+> For health or personal data, turn on [strict privacy](#strict-privacy): the SDK then sends only structured facts about each error (its type, stack trace, release and route), never the message, a raw path, breadcrumbs, or context you haven't allowed.
+
 ## Installation
 
 Swift Package Manager resolves straight from a git URL, no separate package index needed:
@@ -15,7 +17,7 @@ Swift Package Manager resolves straight from a git URL, no separate package inde
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.10.0")
+    .package(url: "https://github.com/Luke-Popwell/forge-ops-tracker-swift.git", from: "0.10.1")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["ForgeOpsTracker"])
