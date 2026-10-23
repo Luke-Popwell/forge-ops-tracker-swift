@@ -20,6 +20,7 @@ public enum PiiScrubber {
         "secret", "apisecret", "clientsecret", "secretkey",
         "token", "accesstoken", "refreshtoken", "apikey", "apitoken", "authorization", "authtoken", "bearer", "sessiontoken", "csrftoken",
         "creditcard", "cardnumber", "cardnum", "cvv", "cvv2", "cvc",
+        "iban", "accountnumber", "routingnumber", "bankaccount",
         "ssn", "socialsecuritynumber", "socialsecurity",
         "privatekey",
     ]
@@ -71,14 +72,110 @@ public enum PiiScrubber {
         return value
     }
 
+    // Card numbers in any other shape, and IBANs: see sdks/PII_SCRUBBING.md, which every SDK
+    // follows, and sdks/pii_scrubbing_vectors.json (a copy is in Tests/ForgeOpsTrackerTests/Fixtures),
+    // which pins the results. Word characters and digits are spelled out as ASCII classes: ICU's
+    // own \w, \d and \b are Unicode-aware, and the rule is ASCII only.
+    private static let digitRun = makePattern("DIGIT RUN", #"(?<![A-Za-z0-9_])[0-9](?:[ -]?[0-9])*(?![A-Za-z0-9_])"#).regex
+    private static let cardPrefixes = makePattern(
+        "CARD PREFIXES",
+        #"\A(?:4|5[1-5]|2(?:22[1-9]|2[3-9][0-9]|[3-6][0-9][0-9]|7[01][0-9]|720)|3[47]|6011|64[4-9]|65|35(?:2[89]|[3-8][0-9])|36|30[0-5]|62)"#
+    ).regex
+    private static let iban = makePattern(
+        "IBAN",
+        #"(?<![A-Za-z0-9_])[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)(?![A-Za-z0-9_])"#
+    ).regex
+
     public static func scrubString(_ string: String) -> String {
-        var result = string
+        // IBANs first: a spaced IBAN's middle groups look like a formatted card number.
+        var result = replaceMatches(of: iban, in: string) { isIban($0) ? "[IBAN FILTERED]" : $0 }
         for pattern in patterns {
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             let template = NSRegularExpression.escapedTemplate(for: "[\(pattern.label) FILTERED]")
             result = pattern.regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
         }
-        return result
+        return replaceMatches(of: digitRun, in: result, with: scrubCardNumbers(in:))
+    }
+
+    /// Every match of `regex` replaced by `transform` of its text. Positions are NSString (UTF-16)
+    /// offsets throughout, the same ones `NSRegularExpression` reports.
+    private static func replaceMatches(of regex: NSRegularExpression, in string: String, with transform: (String) -> String) -> String {
+        let text = string as NSString
+        let range = NSRange(string.startIndex..<string.endIndex, in: string)
+        var output = ""
+        var cursor = 0
+        for match in regex.matches(in: string, options: [], range: range) {
+            output += text.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            output += transform(text.substring(with: match.range))
+            cursor = NSMaxRange(match.range)
+        }
+        output += text.substring(from: cursor)
+        return output
+    }
+
+    /// From each group of the run on, the longest stretch of whole groups that is a card number is
+    /// replaced, so a card followed by its CVV, two cards in a row, and Amex's 4-6-5 are all found.
+    private static func scrubCardNumbers(in run: String) -> String {
+        var digits: [String] = [""]
+        var separators: [String] = []
+        for character in run {
+            if character == " " || character == "-" {
+                separators.append(String(character))
+                digits.append("")
+            } else {
+                digits[digits.count - 1].append(character)
+            }
+        }
+        separators.append("")
+
+        var output = ""
+        var i = 0
+        while i < digits.count {
+            if let last = stride(from: digits.count - 1, through: i, by: -1).first(where: { isCardNumber(digits[i...$0].joined()) }) {
+                output += "[CREDIT CARD FILTERED]" + separators[last]
+                i = last + 1
+            } else {
+                output += digits[i] + separators[i]
+                i += 1
+            }
+        }
+        return output
+    }
+
+    private static func isCardNumber(_ digits: String) -> Bool {
+        let range = NSRange(digits.startIndex..<digits.endIndex, in: digits)
+        return (13...19).contains(digits.count)
+            && cardPrefixes.firstMatch(in: digits, options: [], range: range) != nil
+            && passesLuhn(digits)
+    }
+
+    private static func passesLuhn(_ digits: String) -> Bool {
+        var sum = 0
+        for (index, byte) in digits.utf8.reversed().enumerated() {
+            var value = Int(byte) - 48
+            if index % 2 == 1 {
+                value *= 2
+                if value > 9 { value -= 9 }
+            }
+            sum += value
+        }
+        return sum % 10 == 0
+    }
+
+    /// The IBAN check, a digit at a time: the first four characters moved to the end, letters as
+    /// two digits (A is 10), and the remainder by 97 is 1.
+    private static func isIban(_ candidate: String) -> Bool {
+        let compact = Array(candidate.utf8.filter { $0 != UInt8(ascii: " ") })
+        guard (15...34).contains(compact.count) else { return false }
+
+        var remainder = 0
+        for byte in compact[4...] + compact[..<4] {
+            let number = (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte) ? String(Int(byte) - 55) : String(UnicodeScalar(byte))
+            for digit in number.utf8 {
+                remainder = (remainder * 10 + Int(digit) - 48) % 97
+            }
+        }
+        return remainder == 1
     }
 
     private static func isSensitiveKey(_ key: String?) -> Bool {

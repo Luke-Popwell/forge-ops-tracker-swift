@@ -2,6 +2,35 @@
 import XCTest
 
 final class PiiScrubberTests: XCTestCase {
+    // Fixtures/pii_scrubbing_vectors.json is kept byte-identical to sdks/pii_scrubbing_vectors.json,
+    // which the server's own implementation generates.
+    private func vectors() throws -> [String: [[String: Any]]] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "pii_scrubbing_vectors", withExtension: "json"))
+        let data = try Data(contentsOf: url)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: [[String: Any]]])
+    }
+
+    func testScrubsEverySharedCardNumberAndIbanVectorExactlyAsTheServerDoes() throws {
+        let entries = try XCTUnwrap(vectors()["strings"])
+        XCTAssertFalse(entries.isEmpty)
+        for entry in entries {
+            let input = try XCTUnwrap(entry["input"] as? String)
+            let scrubbed = try XCTUnwrap(entry["scrubbed"] as? String)
+            XCTAssertEqual(PiiScrubber.scrubString(input), scrubbed, "scrubbing \(input)")
+        }
+    }
+
+    func testRedactsEverySharedBankDetailKeyVectorExactlyAsTheServerDoes() throws {
+        let entries = try XCTUnwrap(vectors()["keys"])
+        XCTAssertFalse(entries.isEmpty)
+        for entry in entries {
+            let key = try XCTUnwrap(entry["key"] as? String)
+            let redacted = try XCTUnwrap(entry["redacted"] as? Bool)
+            let result = try XCTUnwrap(PiiScrubber.scrub([key: "x"], key: nil) as? [String: Any])
+            XCTAssertEqual(result[key] as? String, redacted ? PiiScrubber.redacted : "x", "key \(key)")
+        }
+    }
+
     func testScrubStringEmail() {
         XCTAssertEqual(PiiScrubber.scrubString("contact user@example.com for help"), "contact [EMAIL FILTERED] for help")
     }
