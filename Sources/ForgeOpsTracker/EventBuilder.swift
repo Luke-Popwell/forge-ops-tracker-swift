@@ -139,7 +139,7 @@ public enum EventBuilder {
         // Last, so the fingerprint is taken from the message exactly as it would otherwise have
         // been sent (after scrubbing), and nothing added above can bring text back. See StrictPrivacy.
         if configuration.strictPrivacy {
-            result = StrictPrivacy.event(result, allowedFields: configuration.privacyAllowedFields)
+            result = StrictPrivacy.event(result, allowedFields: configuration.privacyAllowedFields, userKey: configuration.privacyUserKey)
         }
         return result
     }

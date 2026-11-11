@@ -5,7 +5,7 @@ import Foundation
 /// leave the device. With it on, only structured facts are sent: an error's type, its frames,
 /// release, environment, server, trace id, timings and counts. Free text, which is where personal
 /// data hides (an error's message, context and tags outside `privacyAllowedFields`, breadcrumbs,
-/// URL paths, the user's email and username), never leaves the process.
+/// URL paths, the user's email and username, the user's raw id), never leaves the process.
 ///
 /// Ported from `app/services/strict_privacy.rb`, the server's own second layer, which applies the
 /// same rules again on arrival when the project's own Strict privacy setting is on. The rules are
@@ -79,7 +79,7 @@ enum StrictPrivacy {
     /// An error event, reduced to what strict privacy sends. Called on the finished payload, after
     /// PII scrubbing, so the fingerprint is taken from the message exactly as it would otherwise
     /// have been sent. Safe to apply twice: a payload that already carries a fingerprint keeps it.
-    static func event(_ payload: [String: Any], allowedFields: [String]) -> [String: Any] {
+    static func event(_ payload: [String: Any], allowedFields: [String], userKey: String? = nil) -> [String: Any] {
         var result = payload
         result["message_fingerprint"] = validFingerprint(payload["message_fingerprint"]) ?? messageFingerprint(payload["message"] as? String)
         for key in ["message", "breadcrumbs", "sql_statement", "endpoint", "context", "tags", "user"] {
@@ -91,7 +91,7 @@ enum StrictPrivacy {
         if let tags = allowed(payload["tags"], allowedFields: allowedFields) {
             result["tags"] = tags
         }
-        if let user = user(payload["user"]) {
+        if let user = user(payload["user"], key: userKey) {
             result["user"] = user
         }
         if let backtrace = payload["backtrace"] as? [[String: Any]] {
@@ -188,10 +188,31 @@ enum StrictPrivacy {
         return kept.isEmpty ? nil : kept
     }
 
-    /// The user's id only, as a string; `nil` when there's no id.
-    private static func user(_ user: Any?) -> [String: Any]? {
+    /// Only a keyed hash of the user's id (`hashedUserId`), and only when the app set
+    /// `Configuration.privacyUserKey`; `nil` otherwise, or when there's no id. A raw id can be a
+    /// record number that identifies a person, and an unkeyed hash of a small number can be guessed
+    /// back. An id already in the hashed form is kept as it is: a crash report is reduced once when
+    /// it's captured and again at upload, and must not be hashed twice.
+    private static func user(_ user: Any?, key: String?) -> [String: Any]? {
+        guard let key, !key.isEmpty else { return nil }
         guard let user = user as? [String: Any], let id = user["id"], !(id is NSNull) else { return nil }
         let string = (id as? String) ?? "\(id)"
-        return string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : ["id": string]
+        if string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+        return ["id": isHashedUserId(string) ? string : hashedUserId(string, key: key)]
+    }
+
+    /// "h1:" and the first 32 lowercase hex characters of HMAC-SHA256 of the id's UTF-8 bytes, keyed
+    /// with the UTF-8 bytes of the app's own secret, which ForgeOps never sees. The same id hashes
+    /// the same under one key, so affected customers can still be counted.
+    static func hashedUserId(_ id: String, key: String) -> String {
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(id.utf8), using: SymmetricKey(data: Data(key.utf8)))
+        let hex = mac.map { String(format: "%02x", $0) }.joined()
+        return "h1:" + String(hex.prefix(fingerprintLength))
+    }
+
+    private static func isHashedUserId(_ id: String) -> Bool {
+        guard id.hasPrefix("h1:") else { return false }
+        let hex = id.dropFirst(3)
+        return hex.count == fingerprintLength && hex.allSatisfy { ("0" ... "9").contains($0) || ("a" ... "f").contains($0) }
     }
 }

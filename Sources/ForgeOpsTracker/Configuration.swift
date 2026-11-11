@@ -91,7 +91,8 @@ public final class Configuration {
     /// Strict privacy, for apps that can't let personal or health data leave the device: off by
     /// default. With it on, an error is sent without its message (a `message_fingerprint`, a one-way
     /// hash of it with numbers, ids, emails and quoted values taken out, keeps grouping working), without breadcrumbs (none
-    /// are recorded), without the SQL statement, and with the user's id only; context and tags keep
+    /// are recorded), without the SQL statement, without the user's email and username, and with the
+    /// user's id only as a keyed hash (`privacyUserKey`); context and tags keep
     /// only the keys in `privacyAllowedFields`, and a span keeps only its method and host, never a
     /// URL path, plus its `db.statement` and `db.system`. See `StrictPrivacy` and
     /// `sdks/STRICT_PRIVACY.md`. ForgeOps applies the same rules again on arrival when the
@@ -101,6 +102,12 @@ public final class Configuration {
     /// Under strict privacy, the context and tag keys still sent (your own error codes, say), and
     /// only when the value is a string, number or boolean. Empty by default: nothing is sent.
     public var privacyAllowedFields: [String] = []
+
+    /// Under strict privacy, the secret the user's id is hashed with (HMAC-SHA256, see
+    /// `StrictPrivacy.hashedUserId`) before it's sent; the key itself stays in your app. Unset (or
+    /// empty) by default: no user is sent at all. Keep it the same across releases and devices, or
+    /// the same customer counts as two.
+    public var privacyUserKey: String?
 
     /// Where pending (not-yet-uploaded) crash reports are written: see CrashStore.
     public var crashReportsDirectory: String

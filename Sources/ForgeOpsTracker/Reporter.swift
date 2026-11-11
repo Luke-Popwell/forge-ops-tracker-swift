@@ -67,7 +67,7 @@ public final class Reporter {
             // Applied again at upload, not only at capture: a raw signal report is only completed
             // here, and a report written before strict privacy was turned on must not go out as it was.
             if configuration.strictPrivacy, let raw = payload {
-                payload = StrictPrivacy.event(raw, allowedFields: configuration.privacyAllowedFields)
+                payload = StrictPrivacy.event(raw, allowedFields: configuration.privacyAllowedFields, userKey: configuration.privacyUserKey)
             }
             guard let payload else {
                 // Unreadable/corrupt file: delete rather than retry forever.

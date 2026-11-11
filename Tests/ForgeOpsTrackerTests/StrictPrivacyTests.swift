@@ -17,13 +17,14 @@ final class StrictPrivacyTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: [[String: String]]])
     }
 
-    private func strictConfiguration(allowedFields: [String] = []) -> Configuration {
+    private func strictConfiguration(allowedFields: [String] = [], userKey: String? = nil) -> Configuration {
         let config = Configuration()
         config.environment = "production"
         config.releaseVersion = "a1b2c3d"
         config.serverName = "test-host"
         config.strictPrivacy = true
         config.privacyAllowedFields = allowedFields
+        config.privacyUserKey = userKey
         return config
     }
 
@@ -54,6 +55,16 @@ final class StrictPrivacyTests: XCTestCase {
         for entry in entries {
             let name = try XCTUnwrap(entry["name"])
             XCTAssertEqual(StrictPrivacy.spanName(name), entry["strict"], "span name: \(name)")
+        }
+    }
+
+    func testEveryUserIdVectorHashesExactlyAsTheServerDoes() throws {
+        let entries = try XCTUnwrap(vectors()["user_id"])
+        XCTAssertFalse(entries.isEmpty)
+        for entry in entries {
+            let id = try XCTUnwrap(entry["id"])
+            let key = try XCTUnwrap(entry["key"])
+            XCTAssertEqual(StrictPrivacy.hashedUserId(id, key: key), entry["hashed"], "user id: \(id)")
         }
     }
 
@@ -94,12 +105,13 @@ final class StrictPrivacyTests: XCTestCase {
         let config = Configuration()
         XCTAssertFalse(config.strictPrivacy)
         XCTAssertEqual(config.privacyAllowedFields, [])
+        XCTAssertNil(config.privacyUserKey)
     }
 
     // MARK: error events
 
     func testAStrictEventCarriesNoFreeText() throws {
-        let config = strictConfiguration(allowedFields: ["error_code", "retries", "nested", "flag"])
+        let config = strictConfiguration(allowedFields: ["error_code", "retries", "nested", "flag"], userKey: "customer-secret")
         config.captureSqlStatement = true
         let error = DatabaseFailure(sql: "SELECT * FROM patients WHERE name = 'Jane'", errorDescription: "Couldn't find patient 8821 (jane@example.com)")
 
@@ -131,7 +143,7 @@ final class StrictPrivacyTests: XCTestCase {
 
         let user = try XCTUnwrap(event["user"] as? [String: Any])
         XCTAssertEqual(user.count, 1)
-        XCTAssertEqual(user["id"] as? String, "42")
+        XCTAssertEqual(user["id"] as? String, "h1:316d4a35bc95112698f59ef5aac5c29a")
 
         let backtrace = try XCTUnwrap(event["backtrace"] as? [[String: Any]])
         for frame in backtrace {
@@ -161,16 +173,36 @@ final class StrictPrivacyTests: XCTestCase {
         XCTAssertEqual(event["exception_class"] as? String, "TestException")
     }
 
-    func testAUserWithNoIdIsLeftOutAndAStringIdIsKept() {
-        let config = strictConfiguration()
+    func testAUserWithNoIdIsLeftOutAndAStringIdIsSentOnlyAsItsKeyedHash() {
+        let config = strictConfiguration(userKey: "customer-secret")
         let error = NSError(domain: "Test", code: 1)
 
         let noId = EventBuilder.buildEvent(error: error, configuration: config, context: nil, user: ["email": "jane@example.com"])
         XCTAssertNil(noId["user"])
 
-        let withId = EventBuilder.buildEvent(error: error, configuration: config, context: nil, user: ["id": "u_1", "username": "jane"])
-        XCTAssertEqual((withId["user"] as? [String: Any])?["id"] as? String, "u_1")
+        let blankId = EventBuilder.buildEvent(error: error, configuration: config, context: nil, user: ["id": "  "])
+        XCTAssertNil(blankId["user"])
+
+        let withId = EventBuilder.buildEvent(error: error, configuration: config, context: nil, user: ["id": "MRN-0042", "username": "jane"])
+        XCTAssertEqual((withId["user"] as? [String: Any])?["id"] as? String, "h1:f3af768c6f9ecb0705f75939dd088b71")
         XCTAssertEqual((withId["user"] as? [String: Any])?.count, 1)
+    }
+
+    func testWithNoUserKeyAStrictEventCarriesNoUser() {
+        let error = NSError(domain: "Test", code: 1)
+        let user: [String: Any] = ["id": 42, "email": "jane@example.com", "username": "jane"]
+
+        let unset = EventBuilder.buildEvent(error: error, configuration: strictConfiguration(), context: nil, user: user)
+        XCTAssertNil(unset["user"])
+
+        let empty = EventBuilder.buildEvent(error: error, configuration: strictConfiguration(userKey: ""), context: nil, user: user)
+        XCTAssertNil(empty["user"])
+    }
+
+    func testApplyingTheRulesTwiceHashesTheUserIdOnce() {
+        let once = StrictPrivacy.event(["exception_class": "E", "user": ["id": 42]], allowedFields: [], userKey: "customer-secret")
+        let twice = StrictPrivacy.event(once, allowedFields: [], userKey: "customer-secret")
+        XCTAssertEqual((twice["user"] as? [String: Any])?["id"] as? String, "h1:316d4a35bc95112698f59ef5aac5c29a")
     }
 
     func testApplyingTheRulesTwiceKeepsTheFirstFingerprint() {

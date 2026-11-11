@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0 (2026-11-11)
+
+- Strict privacy no longer sends the user's raw `id`, which could be a record number that identifies a
+  person. Set `config.privacyUserKey` and the id is sent as a keyed hash (HMAC-SHA256 with your key), so
+  affected customers are still counted. Without a key, no user is sent at all. The key ships inside the
+  app, so it protects the id less than a key kept on a server; leave it unset to send no user.
+
 ## 0.12.0 (2026-10-23)
 
 - PII scrubbing catches card numbers however they're grouped (bare, 4-4-4-4, Amex's 4-6-5, or next to a

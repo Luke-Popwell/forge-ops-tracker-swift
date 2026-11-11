@@ -484,18 +484,26 @@ email or a diagnosis. Off by default.
 ForgeOpsTracker.configure { config in
     config.strictPrivacy = true
     config.privacyAllowedFields = ["error_code", "feature"]
+    config.privacyUserKey = "your-own-secret"  // default nil: no user sent
 }
 ```
 
 With it on:
 
 - An error's message is not sent. A `message_fingerprint` is sent instead: a one-way hash of the
-  message (after PII scrubbing) with its numbers, hex ids and UUIDs taken out, computed on the
+  message (after PII scrubbing) with its emails, quoted values, numbers, hex ids and UUIDs taken out, computed on the
   device, so errors still group together and nothing about the text can be read back from it. A
   raw signal crash report is reduced the same way before it's uploaded.
 - `context` and tags keep only the top-level keys listed in `privacyAllowedFields`, and only when
   the value is a string, number or boolean. With no allowed fields (the default), none are sent.
-- The user is sent as its `id` only, as a string, never `email` or `username`; no id, no user.
+- The user's `email` and `username` are never sent, and neither is the raw `id`. With
+  `privacyUserKey` set, the id is sent as a keyed hash (HMAC-SHA256 with your key), so ForgeOps can
+  still count affected customers but can't read the id. Without a key, no user is sent at all. Keep
+  the key the same across releases, or one customer counts as two.
+- In an app that runs on users' devices, the key ships inside the app and can be read out of it, so
+  it protects the id less than a key kept on a server does: someone with both the key and the hashes
+  could guess ids back. To send no user at all from the app, leave `privacyUserKey` unset (the
+  default).
 - Breadcrumbs are not recorded at all, so none are sent.
 - The SQL statement is never sent, even with `captureSqlStatement` on. The table and view names
   (`captureSqlObjects`) still are.
